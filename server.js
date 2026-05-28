@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import SchemeMapper from './schemeMapper.js';
+import AdvancedSchemeMapper from './advancedSchemeMapper.js';
 
 const app = express();
 app.use(cors());
@@ -8,9 +8,10 @@ app.use(express.json());
 
 // Scheme map cache
 let schemeMapCache = null;
+let analysisCache = null;
 let mapperInstance = null;
 
-// API endpoint to generate scheme map
+// API endpoint to generate scheme map with analysis
 app.post('/api/scheme/generate', async (req, res) => {
   try {
     const { instance, username, password, tableLimit = 100 } = req.body;
@@ -19,17 +20,20 @@ app.post('/api/scheme/generate', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: instance, username, password' });
     }
 
-    const mapper = new SchemeMapper(instance, username, password);
+    const mapper = new AdvancedSchemeMapper(instance, username, password);
     mapperInstance = mapper;
 
-    const schemeMap = await mapper.generateSchemeMap(tableLimit);
-    schemeMapCache = schemeMap;
+    const report = await mapper.generateAnalysisReport(tableLimit);
+    schemeMapCache = report.schemeMap;
+    analysisCache = report.analysis;
 
     res.json({
       success: true,
-      message: `Generated scheme map for ${schemeMap.summary.totalTables} tables`,
-      summary: schemeMap.summary,
-      schemeMap
+      message: `Generated scheme map for ${report.schemeMap.summary.totalTables} tables`,
+      summary: report.schemeMap.summary,
+      analysis: report.analysis,
+      insights: report.insights,
+      schemeMap: report.schemeMap
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -44,6 +48,22 @@ app.get('/api/scheme', (req, res) => {
   res.json(schemeMapCache);
 });
 
+// API endpoint to get analysis
+app.get('/api/scheme/analysis', (req, res) => {
+  if (!analysisCache) {
+    return res.status(404).json({ error: 'No analysis available yet.' });
+  }
+  res.json(analysisCache);
+});
+
+// API endpoint to get insights
+app.get('/api/scheme/insights', (req, res) => {
+  if (!mapperInstance) {
+    return res.status(404).json({ error: 'No scheme map generated yet.' });
+  }
+  res.json({ insights: mapperInstance.generateInsights() });
+});
+
 // API endpoint to get table details
 app.get('/api/scheme/table/:tableName', (req, res) => {
   if (!schemeMapCache) {
@@ -53,6 +73,7 @@ app.get('/api/scheme/table/:tableName', (req, res) => {
   const { tableName } = req.params;
   const table = schemeMapCache.tables[tableName];
   const fields = schemeMapCache.fields[tableName];
+  const metrics = analysisCache?.tableMetrics?.[tableName];
 
   if (!table) {
     return res.status(404).json({ error: `Table ${tableName} not found` });
@@ -61,6 +82,7 @@ app.get('/api/scheme/table/:tableName', (req, res) => {
   res.json({
     table,
     fields,
+    metrics,
     dependencies: mapperInstance ? mapperInstance.getTableDependencies(tableName) : null
   });
 });
@@ -113,6 +135,18 @@ app.get('/api/scheme/export/json', (req, res) => {
   res.send(JSON.stringify(schemeMapCache, null, 2));
 });
 
+// API endpoint to export analysis report as HTML
+app.get('/api/scheme/export/report', (req, res) => {
+  if (!mapperInstance) {
+    return res.status(404).json({ error: 'No scheme map generated yet.' });
+  }
+
+  const html = mapperInstance.generateHTMLReport();
+  res.setHeader('Content-Type', 'text/html');
+  res.setHeader('Content-Disposition', 'attachment; filename="schema-analysis-report.html"');
+  res.send(html);
+});
+
 // Serve frontend
 app.get('/', (req, res) => {
   res.send(getHTMLPage());
@@ -132,7 +166,7 @@ function getHTMLPage() {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
     .container { display: flex; height: 100vh; }
-    .sidebar { width: 380px; background: white; border-right: 1px solid #ddd; overflow-y: auto; padding: 20px; }
+    .sidebar { width: 400px; background: white; border-right: 1px solid #ddd; overflow-y: auto; padding: 20px; }
     .main { flex: 1; display: flex; flex-direction: column; }
     .controls { background: white; padding: 20px; border-bottom: 1px solid #ddd; }
     #network { flex: 1; background: white; }
@@ -147,6 +181,14 @@ function getHTMLPage() {
     .stat-box { background: #f9f9f9; padding: 10px; border-radius: 4px; text-align: center; }
     .stat-box h4 { font-size: 12px; color: #666; margin-bottom: 5px; }
     .stat-box .value { font-size: 20px; font-weight: bold; color: #0066cc; }
+    .score-box { background: #f9f9f9; padding: 10px; border-radius: 4px; margin: 10px 0; }
+    .score-label { font-size: 12px; color: #666; }
+    .score-bar { width: 100%; height: 8px; background: #ddd; border-radius: 4px; margin: 5px 0; overflow: hidden; }
+    .score-fill { height: 100%; background: #0066cc; }
+    .insights { margin-top: 15px; max-height: 200px; overflow-y: auto; }
+    .insight { padding: 8px; margin: 5px 0; border-radius: 4px; font-size: 12px; border-left: 3px solid; }
+    .insight.warning { background: #fff3cd; border-color: #ffc107; }
+    .insight.info { background: #d1ecf1; border-color: #17a2b8; }
     .table-list { margin-top: 20px; }
     .table-item { padding: 10px; background: #f9f9f9; border-radius: 4px; margin-bottom: 8px; cursor: pointer; border-left: 3px solid #0066cc; }
     .table-item:hover { background: #f0f0f0; }
@@ -155,8 +197,8 @@ function getHTMLPage() {
     .loading { text-align: center; padding: 20px; color: #666; }
     .error { color: #d32f2f; padding: 10px; background: #ffebee; border-radius: 4px; margin-bottom: 10px; }
     .success { color: #388e3c; padding: 10px; background: #e8f5e9; border-radius: 4px; margin-bottom: 10px; }
-    .export-buttons { display: flex; gap: 10px; margin-top: 10px; }
-    .export-buttons button { flex: 1; margin: 0; }
+    .export-buttons { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    .export-buttons button { flex: 1; margin: 0; min-width: 80px; }
     h2 { font-size: 18px; margin-bottom: 15px; }
     h3 { font-size: 14px; margin-top: 15px; margin-bottom: 10px; }
   </style>
@@ -204,9 +246,25 @@ function getHTMLPage() {
           </div>
         </div>
 
+        <div id="scores" style="display:none;">
+          <div class="score-box">
+            <div class="score-label">Complexity Score</div>
+            <div class="score-bar"><div class="score-fill" id="complexityFill" style="width: 0%"></div></div>
+            <div id="complexityValue" style="font-size: 12px; color: #666;"></div>
+          </div>
+          <div class="score-box">
+            <div class="score-label">Data Quality Score</div>
+            <div class="score-bar"><div class="score-fill" id="qualityFill" style="width: 0%"></div></div>
+            <div id="qualityValue" style="font-size: 12px; color: #666;"></div>
+          </div>
+        </div>
+
+        <div id="insights" class="insights" style="display:none;"></div>
+
         <div class="export-buttons" id="exportButtons" style="display:none;">
-          <button class="secondary" onclick="exportJSON()">Export JSON</button>
-          <button class="secondary" onclick="exportGraphQL()">Export GraphQL</button>
+          <button class="secondary" onclick="exportJSON()">JSON</button>
+          <button class="secondary" onclick="exportGraphQL()">GraphQL</button>
+          <button class="secondary" onclick="exportReport()">Report</button>
         </div>
       </div>
 
@@ -221,6 +279,7 @@ function getHTMLPage() {
   <script>
     let network = null;
     let currentScheme = null;
+    let currentAnalysis = null;
 
     async function generateScheme() {
       const instance = document.getElementById('instance').value;
@@ -250,6 +309,7 @@ function getHTMLPage() {
 
         const data = await response.json();
         currentScheme = data.schemeMap;
+        currentAnalysis = data.analysis;
         
         messageDiv.innerHTML = \`<div class="success">\${data.message}</div>\`;
         
@@ -259,6 +319,21 @@ function getHTMLPage() {
         document.getElementById('statRelationships').textContent = data.summary.totalRelationships;
         document.getElementById('statHierarchies').textContent = data.summary.inheritanceHierarchies;
         document.getElementById('stats').style.display = 'grid';
+        
+        // Update scores
+        document.getElementById('complexityFill').style.width = data.analysis.complexityScore + '%';
+        document.getElementById('complexityValue').textContent = data.analysis.complexityScore + '/100';
+        document.getElementById('qualityFill').style.width = data.analysis.dataQualityScore + '%';
+        document.getElementById('qualityValue').textContent = data.analysis.dataQualityScore + '/100';
+        document.getElementById('scores').style.display = 'block';
+        
+        // Display insights
+        const insightsDiv = document.getElementById('insights');
+        insightsDiv.innerHTML = data.insights.map(i => 
+          \`<div class="insight \${i.type}">\${i.message}</div>\`
+        ).join('');
+        insightsDiv.style.display = 'block';
+        
         document.getElementById('exportButtons').style.display = 'flex';
         
         visualizeScheme(data.schemeMap);
@@ -272,7 +347,6 @@ function getHTMLPage() {
       const nodes = [];
       const edges = [];
 
-      // Create nodes for each table
       Object.entries(scheme.tables).forEach(([name, table]) => {
         const fieldCount = (scheme.fields[name] || []).length;
         nodes.push({
@@ -284,7 +358,6 @@ function getHTMLPage() {
         });
       });
 
-      // Create edges for relationships
       scheme.relationships.forEach(rel => {
         edges.push({
           from: rel.from,
@@ -337,7 +410,6 @@ function getHTMLPage() {
     }
 
     function exportGraphQL() {
-      if (!currentScheme) return;
       fetch('/api/scheme/export/graphql')
         .then(r => r.text())
         .then(text => {
@@ -349,6 +421,14 @@ function getHTMLPage() {
           link.click();
         });
     }
+
+    function exportReport() {
+      const url = '/api/scheme/export/report';
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'schema-analysis-report.html';
+      link.click();
+    }
   </script>
 </body>
 </html>
@@ -357,6 +437,6 @@ function getHTMLPage() {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`ServiceNow Scheme Mapper running on port ${PORT}`);
+  console.log(\`ServiceNow Scheme Mapper running on port \${PORT}\`);
 });
 
