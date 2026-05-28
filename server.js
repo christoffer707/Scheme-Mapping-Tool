@@ -6,6 +6,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Timeout middleware for the scheme generation endpoint (60 seconds)
+app.use('/api/scheme/generate', (req, res, next) => {
+  res.setTimeout(60000, () => {
+    res.status(503).json({
+      error: 'Request timed out after 60 seconds. Try reducing the table limit or check that your ServiceNow instance is reachable.'
+    });
+  });
+  next();
+});
+
 // Scheme map cache
 let schemeMapCache = null;
 let analysisCache = null;
@@ -14,7 +24,7 @@ let mapperInstance = null;
 // API endpoint to generate scheme map with analysis
 app.post('/api/scheme/generate', async (req, res) => {
   try {
-    let { instance, username, password, tableLimit = 100 } = req.body;
+    let { instance, username, password, tableLimit = 50 } = req.body;
 
     if (!instance || !username || !password) {
       return res.status(400).json({ error: 'Missing required fields: instance, username, password' });
@@ -49,6 +59,11 @@ app.post('/api/scheme/generate', async (req, res) => {
       schemeMap: report.schemeMap
     });
   } catch (error) {
+    if (error.message.includes('timed out') || error.code === 'ECONNABORTED') {
+      return res.status(503).json({
+        error: `ServiceNow request timed out: ${error.message}. Try reducing the table limit or check your instance connectivity.`
+      });
+    }
     res.status(500).json({ error: error.message });
   }
 });
@@ -236,8 +251,9 @@ function getHTMLPage() {
         </div>
         <div class="form-group">
           <label>Table Limit</label>
-          <input type="number" id="tableLimit" value="100" min="1" max="1000">
+          <input type="number" id="tableLimit" value="50" min="1" max="1000">
         </div>
+
         <button onclick="generateScheme()">Generate Scheme Map</button>
 
         <div id="stats" class="stats" style="display:none;">
@@ -318,12 +334,19 @@ function getHTMLPage() {
 
       messageDiv.innerHTML = '<div class="loading">Generating scheme map...</div>';
 
+      // Warn the user if processing takes longer than 30 seconds
+      const timeoutWarning = setTimeout(() => {
+        messageDiv.innerHTML = '<div class="loading">Still working... This is taking longer than expected. Large schemas can take up to 60 seconds. Consider reducing the table limit if this keeps happening.</div>';
+      }, 30000);
+
       try {
         const response = await fetch('/api/scheme/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ instance, username, password, tableLimit })
         });
+
+        clearTimeout(timeoutWarning);
 
         if (!response.ok) {
           const error = await response.json();
@@ -333,9 +356,7 @@ function getHTMLPage() {
         const data = await response.json();
         currentScheme = data.schemeMap;
         currentAnalysis = data.analysis;
-        
-        messageDiv.innerHTML = \`<div class="success">\${data.message}</div>\`;
-        
+
         // Update stats
         document.getElementById('statTables').textContent = data.summary.totalTables;
         document.getElementById('statFields').textContent = data.summary.totalFields;
@@ -362,7 +383,8 @@ function getHTMLPage() {
         visualizeScheme(data.schemeMap);
         populateTableList(data.schemeMap);
       } catch (error) {
-        messageDiv.innerHTML = \`<div class="error">Error: \${error.message}</div>\`;
+        clearTimeout(timeoutWarning);
+        messageDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
       }
     }
 

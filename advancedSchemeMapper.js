@@ -226,7 +226,7 @@ class AdvancedSchemeMapper extends SchemeMapper {
   /**
    * Generate comprehensive analysis report
    */
-  async generateAnalysisReport(tableLimit = 100) {
+  async generateAnalysisReport(tableLimit = 50) {
     // Generate base scheme map
     const schemeMap = await this.generateSchemeMap(tableLimit);
 

@@ -30,6 +30,7 @@ class SchemeMapper {
     try {
       const response = await axios.get(`${this.baseUrl}/table/sys_db_object`, {
         headers: this.headers,
+        timeout: 30000,
         params: {
           sysparm_limit: limit,
           sysparm_fields: 'name,label,sys_id,super_class,is_extendable,access_controls',
@@ -51,6 +52,9 @@ class SchemeMapper {
 
       return tables;
     } catch (error) {
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        throw new Error(`Request timed out fetching tables from ${this.instance}. The instance may be slow or unreachable.`);
+      }
       throw new Error(`Failed to fetch tables: ${error.message}`);
     }
   }
@@ -62,6 +66,7 @@ class SchemeMapper {
     try {
       const response = await axios.get(`${this.baseUrl}/table/sys_dictionary`, {
         headers: this.headers,
+        timeout: 30000,
         params: {
           sysparm_query: `name=${tableName}^ORname=${tableName}%5EORDERBY%5Eelement`,
           sysparm_limit: 500,
@@ -87,6 +92,9 @@ class SchemeMapper {
 
       return this.cache.fields[tableName];
     } catch (error) {
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        throw new Error(`Request timed out fetching fields for ${tableName}. The instance may be slow or unreachable.`);
+      }
       throw new Error(`Failed to fetch fields for ${tableName}: ${error.message}`);
     }
   }
@@ -145,7 +153,7 @@ class SchemeMapper {
   /**
    * Generate comprehensive schema map
    */
-  async generateSchemeMap(tableLimit = 100) {
+  async generateSchemeMap(tableLimit = 50) {
     try {
       console.log(`Fetching tables from ${this.instance}...`);
       const tables = await this.fetchAllTables(tableLimit);
