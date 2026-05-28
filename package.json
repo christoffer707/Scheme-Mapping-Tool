@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "JSON ERD visualizer for ServiceNow instances",
   "type": "module",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "dev": "node server.js",
     "build": "echo 'Build complete'"
   },
