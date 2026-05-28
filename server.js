@@ -14,10 +14,23 @@ let mapperInstance = null;
 // API endpoint to generate scheme map with analysis
 app.post('/api/scheme/generate', async (req, res) => {
   try {
-    const { instance, username, password, tableLimit = 100 } = req.body;
-    
+    let { instance, username, password, tableLimit = 100 } = req.body;
+
     if (!instance || !username || !password) {
       return res.status(400).json({ error: 'Missing required fields: instance, username, password' });
+    }
+
+    // Sanitize: trim whitespace and strip any accidental protocol prefix
+    instance = instance.trim().replace(/^https?:\/\//i, '');
+
+    // Strip trailing slashes and any path/domain suffix (e.g. ".service-now.com")
+    instance = instance.replace(/\.service-now\.com.*/i, '').replace(/\/.*$/, '').trim();
+
+    // Validate: instance name must be non-empty alphanumeric (hyphens allowed)
+    if (!instance || !/^[a-zA-Z0-9-]+$/.test(instance)) {
+      return res.status(400).json({
+        error: 'Invalid instance name. Please provide only the instance identifier (e.g., "dev12345"), not a full URL.'
+      });
     }
 
     const mapper = new AdvancedSchemeMapper(instance, username, password);
@@ -211,7 +224,7 @@ function getHTMLPage() {
         <div id="message"></div>
         <div class="form-group">
           <label>Instance Name</label>
-          <input type="text" id="instance" placeholder="e.g., dev12345">
+          <input type="text" id="instance" placeholder="e.g., dev12345 (not https://dev12345.service-now.com)">
         </div>
         <div class="form-group">
           <label>Username</label>
@@ -282,14 +295,24 @@ function getHTMLPage() {
     let currentAnalysis = null;
 
     async function generateScheme() {
-      const instance = document.getElementById('instance').value;
-      const username = document.getElementById('username').value;
+      let instance = document.getElementById('instance').value.trim();
+      const username = document.getElementById('username').value.trim();
       const password = document.getElementById('password').value;
       const tableLimit = parseInt(document.getElementById('tableLimit').value);
       const messageDiv = document.getElementById('message');
 
       if (!instance || !username || !password) {
         messageDiv.innerHTML = '<div class="error">Please fill in all fields</div>';
+        return;
+      }
+
+      // Strip any accidental protocol prefix (e.g. "https://dev12345.service-now.com")
+      instance = instance.replace(/^https?:\/\//i, '');
+      // Strip trailing domain suffix and any path
+      instance = instance.replace(/\.service-now\.com.*/i, '').replace(/\/.*$/, '').trim();
+
+      if (!instance || !/^[a-zA-Z0-9-]+$/.test(instance)) {
+        messageDiv.innerHTML = '<div class="error">Invalid instance name. Enter only the instance identifier (e.g., "dev12345"), not a full URL.</div>';
         return;
       }
 
