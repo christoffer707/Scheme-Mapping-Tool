@@ -1,0 +1,15 @@
+{
+  "name": "servicenow-erd-visualizer",
+  "version": "1.0.0",
+  "description": "JSON ERD visualizer for ServiceNow instances",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "echo 'Build complete'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5"
+  }
+}
