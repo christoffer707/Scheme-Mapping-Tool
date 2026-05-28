@@ -100,6 +100,209 @@ class SchemeMapper {
   }
 
   /**
+   * Fetch UI Policies for a specific table
+   */
+  async fetchUIPolicies(tableName) {
+    try {
+      const response = await axios.get(`${this.baseUrl}/table/sys_ui_policy`, {
+        headers: this.headers,
+        timeout: 30000,
+        params: {
+          sysparm_query: `table=${tableName}`,
+          sysparm_limit: 200,
+          sysparm_fields: 'name,short_description,conditions,active,run_scripts,script_true,script_false,sys_id',
+          sysparm_exclude_reference_link: true
+        }
+      });
+
+      const policies = response.data.result || [];
+      if (!this.cache.uiPolicies) this.cache.uiPolicies = {};
+      this.cache.uiPolicies[tableName] = policies.map(p => ({
+        sysId: p.sys_id,
+        name: p.name,
+        description: p.short_description,
+        conditions: p.conditions,
+        active: p.active === 'true' || p.active === true,
+        runScripts: p.run_scripts === 'true' || p.run_scripts === true,
+        scriptTrue: p.script_true,
+        scriptFalse: p.script_false
+      }));
+
+      return this.cache.uiPolicies[tableName];
+    } catch (error) {
+      if (!this.cache.uiPolicies) this.cache.uiPolicies = {};
+      this.cache.uiPolicies[tableName] = [];
+      return [];
+    }
+  }
+
+  /**
+   * Fetch UI Policy Actions for a specific table
+   */
+  async fetchUIPolicyActions(tableName) {
+    try {
+      const response = await axios.get(`${this.baseUrl}/table/sys_ui_policy_action`, {
+        headers: this.headers,
+        timeout: 30000,
+        params: {
+          sysparm_query: `ui_policy.table=${tableName}`,
+          sysparm_limit: 500,
+          sysparm_fields: 'field,mandatory,visible,read_only,ui_policy,sys_id',
+          sysparm_exclude_reference_link: true
+        }
+      });
+
+      const actions = response.data.result || [];
+      if (!this.cache.uiPolicyActions) this.cache.uiPolicyActions = {};
+      this.cache.uiPolicyActions[tableName] = actions.map(a => ({
+        sysId: a.sys_id,
+        field: a.field,
+        mandatory: a.mandatory,
+        visible: a.visible,
+        readOnly: a.read_only,
+        uiPolicyId: typeof a.ui_policy === 'object' ? a.ui_policy.value : a.ui_policy
+      }));
+
+      return this.cache.uiPolicyActions[tableName];
+    } catch (error) {
+      if (!this.cache.uiPolicyActions) this.cache.uiPolicyActions = {};
+      this.cache.uiPolicyActions[tableName] = [];
+      return [];
+    }
+  }
+
+  /**
+   * Fetch Business Rules for a specific table
+   */
+  async fetchBusinessRules(tableName) {
+    try {
+      const response = await axios.get(`${this.baseUrl}/table/sys_script`, {
+        headers: this.headers,
+        timeout: 30000,
+        params: {
+          sysparm_query: `collection=${tableName}`,
+          sysparm_limit: 200,
+          sysparm_fields: 'name,active,when,order,filter_condition,script,add_message,message,abort_action,sys_id',
+          sysparm_exclude_reference_link: true
+        }
+      });
+
+      const rules = response.data.result || [];
+      if (!this.cache.businessRules) this.cache.businessRules = {};
+      this.cache.businessRules[tableName] = rules.map(r => ({
+        sysId: r.sys_id,
+        name: r.name,
+        active: r.active === 'true' || r.active === true,
+        when: r.when,
+        order: r.order,
+        filterCondition: r.filter_condition,
+        script: r.script,
+        addMessage: r.add_message === 'true' || r.add_message === true,
+        message: r.message,
+        abortAction: r.abort_action === 'true' || r.abort_action === true
+      }));
+
+      return this.cache.businessRules[tableName];
+    } catch (error) {
+      if (!this.cache.businessRules) this.cache.businessRules = {};
+      this.cache.businessRules[tableName] = [];
+      return [];
+    }
+  }
+
+  /**
+   * Fetch Script Includes referenced by a table's business rules / UI policies
+   */
+  async fetchScriptIncludes(tableName) {
+    try {
+      // Fetch all script includes (they are global, not table-scoped)
+      // We search for ones whose name appears in the business rules for this table
+      const rules = this.cache.businessRules ? (this.cache.businessRules[tableName] || []) : [];
+      const policies = this.cache.uiPolicies ? (this.cache.uiPolicies[tableName] || []) : [];
+
+      // Collect all script text to search for include names
+      const allScripts = [
+        ...rules.map(r => r.script || ''),
+        ...policies.map(p => (p.scriptTrue || '') + ' ' + (p.scriptFalse || ''))
+      ].join('\n');
+
+      // Also fetch script includes that are scoped to the same app scope as the table
+      const response = await axios.get(`${this.baseUrl}/table/sys_script_include`, {
+        headers: this.headers,
+        timeout: 30000,
+        params: {
+          sysparm_limit: 200,
+          sysparm_fields: 'name,description,active,access,script,api_name,sys_id,sys_scope',
+          sysparm_exclude_reference_link: true
+        }
+      });
+
+      const includes = response.data.result || [];
+      if (!this.cache.scriptIncludes) this.cache.scriptIncludes = {};
+
+      // Filter to those referenced in scripts, or return all if no scripts exist
+      const referenced = includes.filter(inc => {
+        if (!allScripts.trim()) return true; // return all if no scripts to search
+        return allScripts.includes(inc.name);
+      });
+
+      this.cache.scriptIncludes[tableName] = (referenced.length > 0 ? referenced : includes.slice(0, 50)).map(inc => ({
+        sysId: inc.sys_id,
+        name: inc.name,
+        description: inc.description,
+        active: inc.active === 'true' || inc.active === true,
+        access: inc.access,
+        script: inc.script,
+        apiName: inc.api_name,
+        scope: typeof inc.sys_scope === 'object' ? inc.sys_scope.display_value : inc.sys_scope
+      }));
+
+      return this.cache.scriptIncludes[tableName];
+    } catch (error) {
+      if (!this.cache.scriptIncludes) this.cache.scriptIncludes = {};
+      this.cache.scriptIncludes[tableName] = [];
+      return [];
+    }
+  }
+
+  /**
+   * Fetch Flows (Flow Designer) for a specific table
+   */
+  async fetchFlows(tableName) {
+    try {
+      const response = await axios.get(`${this.baseUrl}/table/sys_hub_flow`, {
+        headers: this.headers,
+        timeout: 30000,
+        params: {
+          sysparm_query: `table_name=${tableName}^ORtrigger_table=${tableName}`,
+          sysparm_limit: 100,
+          sysparm_fields: 'name,description,active,trigger_type,table_name,sys_id,status,run_as',
+          sysparm_exclude_reference_link: true
+        }
+      });
+
+      const flows = response.data.result || [];
+      if (!this.cache.flows) this.cache.flows = {};
+      this.cache.flows[tableName] = flows.map(f => ({
+        sysId: f.sys_id,
+        name: f.name,
+        description: f.description,
+        active: f.active === 'true' || f.active === true,
+        triggerType: f.trigger_type,
+        tableName: f.table_name,
+        status: f.status,
+        runAs: f.run_as
+      }));
+
+      return this.cache.flows[tableName];
+    } catch (error) {
+      if (!this.cache.flows) this.cache.flows = {};
+      this.cache.flows[tableName] = [];
+      return [];
+    }
+  }
+
+  /**
    * Analyze relationships between tables
    */
   analyzeRelationships() {
@@ -269,6 +472,30 @@ class SchemeMapper {
     });
 
     return cycles;
+  }
+
+  /**
+   * Fetch all extended metadata for a single table (on-demand)
+   */
+  async fetchTableDetails(tableName) {
+    const [uiPolicies, uiPolicyActions, businessRules, flows] = await Promise.all([
+      this.fetchUIPolicies(tableName),
+      this.fetchUIPolicyActions(tableName),
+      this.fetchBusinessRules(tableName),
+      this.fetchFlows(tableName)
+    ]);
+    // Script includes depend on business rules being fetched first
+    const scriptIncludes = await this.fetchScriptIncludes(tableName);
+
+    return {
+      tableName,
+      fields: this.cache.fields[tableName] || [],
+      uiPolicies,
+      uiPolicyActions,
+      businessRules,
+      scriptIncludes,
+      flows
+    };
   }
 
   /**

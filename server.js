@@ -138,6 +138,44 @@ app.get('/api/scheme/table/:tableName', (req, res) => {
   });
 });
 
+// API endpoint to get comprehensive table details (fields, UI policies, business rules, script includes, flows)
+app.get('/api/scheme/table/:tableName/details', async (req, res) => {
+  if (!schemeMapCache) {
+    return res.status(404).json({ error: 'No scheme map generated yet. POST to /api/scheme/generate first.' });
+  }
+  if (!mapperInstance) {
+    return res.status(404).json({ error: 'No mapper instance available.' });
+  }
+
+  const { tableName } = req.params;
+  const table = schemeMapCache.tables[tableName];
+
+  if (!table) {
+    return res.status(404).json({ error: 'Table ' + tableName + ' not found in cached schema.' });
+  }
+
+  try {
+    const details = await mapperInstance.fetchTableDetails(tableName);
+    const metrics = analysisCache && analysisCache.tableMetrics ? analysisCache.tableMetrics[tableName] : null;
+    const dependencies = mapperInstance.getTableDependencies(tableName);
+
+    res.json({
+      table,
+      metrics,
+      dependencies,
+      fields: details.fields,
+      uiPolicies: details.uiPolicies,
+      uiPolicyActions: details.uiPolicyActions,
+      businessRules: details.businessRules,
+      scriptIncludes: details.scriptIncludes,
+      flows: details.flows
+    });
+  } catch (error) {
+    console.error('[table-details] Error for ' + tableName + ':', error.message);
+    res.status(500).json({ error: 'Failed to fetch details for ' + tableName + ': ' + error.message });
+  }
+});
+
 // API endpoint to get relationships
 app.get('/api/scheme/relationships', (req, res) => {
   if (!schemeMapCache) {
@@ -607,6 +645,403 @@ function getHTMLPage() {
     .shortcut-pill kbd { font-family: monospace; color: var(--text-secondary); font-size: 10px; }
 
     .hidden { display: none !important; }
+
+    /* ── Inspector Panel ── */
+    .inspector {
+      width: 480px;
+      min-width: 480px;
+      background: var(--bg-secondary);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: width 0.25s ease, min-width 0.25s ease;
+    }
+    .inspector.collapsed { width: 0; min-width: 0; border-left: none; }
+    .inspector-header {
+      padding: 16px 18px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .inspector-title-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .inspector-icon {
+      width: 34px; height: 34px;
+      background: var(--accent-light);
+      border: 1px solid rgba(99,102,241,0.3);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+    .inspector-title-text { flex: 1; min-width: 0; }
+    .inspector-title-text h2 {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .inspector-title-text p {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .inspector-close {
+      width: 26px; height: 26px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 14px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.12s, color 0.12s;
+    }
+    .inspector-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .inspector-meta-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .meta-pill {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 99px;
+      letter-spacing: 0.3px;
+    }
+    .meta-pill.accent { background: var(--accent-light); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.25); }
+    .meta-pill.success { background: var(--success-light); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.2); }
+    .meta-pill.warning { background: var(--warning-light); color: #fcd34d; border: 1px solid rgba(245,158,11,0.2); }
+    .meta-pill.muted { background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border); }
+    .inspector-tabs {
+      display: flex;
+      gap: 2px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      overflow-x: auto;
+    }
+    .inspector-tabs::-webkit-scrollbar { height: 0; }
+    .inspector-tab {
+      padding: 10px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+      transition: color 0.12s, border-color 0.12s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      user-select: none;
+    }
+    .inspector-tab:hover { color: var(--text-secondary); }
+    .inspector-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .inspector-tab .tab-count {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 99px;
+      background: var(--bg-card);
+      color: var(--text-muted);
+    }
+    .inspector-tab.active .tab-count { background: var(--accent-light); color: #a5b4fc; }
+    .inspector-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 18px;
+    }
+    .inspector-body::-webkit-scrollbar { width: 4px; }
+    .inspector-body::-webkit-scrollbar-track { background: transparent; }
+    .inspector-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .inspector-loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .inspector-loading .big-spinner {
+      width: 28px; height: 28px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .inspector-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 40px 20px;
+      color: var(--text-muted);
+      font-size: 12px;
+      text-align: center;
+    }
+    .inspector-empty .empty-emoji { font-size: 28px; opacity: 0.5; }
+    .inspector-search {
+      position: relative;
+      margin-bottom: 12px;
+    }
+    .inspector-search input {
+      width: 100%;
+      padding: 8px 10px 8px 32px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 12px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .inspector-search input::placeholder { color: var(--text-muted); }
+    .inspector-search input:focus { border-color: var(--accent); }
+    .inspector-search .search-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 12px;
+      pointer-events: none;
+    }
+    .field-table { width: 100%; border-collapse: collapse; }
+    .field-table th {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      padding: 6px 8px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .field-table td {
+      padding: 7px 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      border-bottom: 1px solid rgba(46,50,80,0.5);
+      vertical-align: middle;
+    }
+    .field-table tr:last-child td { border-bottom: none; }
+    .field-table tr:hover td { background: var(--bg-hover); }
+    .field-name-cell {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .field-name-text {
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+      font-size: 11px;
+      color: var(--text-primary);
+    }
+    .copy-btn {
+      width: 18px; height: 18px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 11px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 3px;
+      opacity: 0;
+      transition: opacity 0.12s, color 0.12s, background 0.12s;
+      flex-shrink: 0;
+    }
+    .field-table tr:hover .copy-btn { opacity: 1; }
+    .copy-btn:hover { color: var(--accent); background: var(--accent-light); }
+    .copy-btn.copied { color: var(--success); opacity: 1; }
+    .type-badge {
+      font-size: 10px;
+      font-weight: 500;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--bg-hover);
+      color: var(--text-muted);
+      font-family: "SF Mono", "Fira Code", monospace;
+      white-space: nowrap;
+    }
+    .type-badge.ref { background: rgba(59,130,246,0.12); color: #93c5fd; }
+    .type-badge.script { background: rgba(245,158,11,0.12); color: #fcd34d; }
+    .bool-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .bool-dot.yes { background: var(--success); }
+    .bool-dot.no { background: var(--border); }
+    .rule-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .rule-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s;
+    }
+    .rule-card-header:hover { background: var(--bg-hover); }
+    .rule-card-header .rule-name {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rule-card-header .rule-chevron {
+      font-size: 10px;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+      flex-shrink: 0;
+    }
+    .rule-card.open .rule-chevron { transform: rotate(90deg); }
+    .rule-card-body {
+      display: none;
+      padding: 0 12px 12px;
+      border-top: 1px solid var(--border);
+    }
+    .rule-card.open .rule-card-body { display: block; }
+    .rule-meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 0 10px;
+    }
+    .rule-field { margin-bottom: 8px; }
+    .rule-field-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .rule-field-value {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .code-block {
+      position: relative;
+      background: #0d0f1a;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      color: #c9d1d9;
+      overflow-x: auto;
+      white-space: pre;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .code-block::-webkit-scrollbar { width: 4px; height: 4px; }
+    .code-block::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .code-copy-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      padding: 3px 8px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .code-copy-btn:hover { background: var(--accent-light); color: #a5b4fc; }
+    .code-copy-btn.copied { color: var(--success); }
+    .tok-kw { color: #ff7b72; }
+    .tok-str { color: #a5d6ff; }
+    .tok-num { color: #79c0ff; }
+    .tok-cmt { color: #8b949e; font-style: italic; }
+    .tok-fn { color: #d2a8ff; }
+    .overview-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .overview-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+    }
+    .overview-card .ov-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+    }
+    .overview-card .ov-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1;
+    }
+    .overview-card .ov-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .dep-section { margin-bottom: 14px; }
+    .dep-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .dep-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 9px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin: 0 4px 4px 0;
+      cursor: pointer;
+      transition: border-color 0.12s, color 0.12s;
+    }
+    .dep-chip:hover { border-color: var(--accent); color: var(--text-primary); }
+    .dep-chip .dep-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .dep-chip.incoming .dep-dot { background: var(--info); }
+    .dep-chip.outgoing .dep-dot { background: var(--accent); }
   </style>
 </head>
 <body>
@@ -763,6 +1198,36 @@ function getHTMLPage() {
       <div class="tt-row"><span class="tt-label">Extendable</span><span class="tt-val" id="ttExt"></span></div>
       <div class="tt-type" id="ttType"></div>
     </div>
+
+    <!-- Inspector Panel -->
+    <aside class="inspector collapsed" id="inspector">
+      <div class="inspector-header">
+        <div class="inspector-title-row">
+          <div class="inspector-icon">&#x1F4CB;</div>
+          <div class="inspector-title-text">
+            <h2 id="inspectorTitle">Table Inspector</h2>
+            <p id="inspectorSubtitle">Select a table to inspect</p>
+          </div>
+          <button class="inspector-close" onclick="closeInspector()" title="Close">&#x2715;</button>
+        </div>
+        <div class="inspector-meta-pills" id="inspectorPills"></div>
+      </div>
+      <div class="inspector-tabs">
+        <div class="inspector-tab active" data-tab="overview" onclick="switchInspectorTab(this,'overview')">Overview</div>
+        <div class="inspector-tab" data-tab="fields" onclick="switchInspectorTab(this,'fields')">Fields <span class="tab-count" id="tabCountFields">0</span></div>
+        <div class="inspector-tab" data-tab="uipolicies" onclick="switchInspectorTab(this,'uipolicies')">UI Policies <span class="tab-count" id="tabCountUIPolicies">0</span></div>
+        <div class="inspector-tab" data-tab="bizrules" onclick="switchInspectorTab(this,'bizrules')">Business Rules <span class="tab-count" id="tabCountBizRules">0</span></div>
+        <div class="inspector-tab" data-tab="scriptincludes" onclick="switchInspectorTab(this,'scriptincludes')">Script Includes <span class="tab-count" id="tabCountScriptIncludes">0</span></div>
+        <div class="inspector-tab" data-tab="flows" onclick="switchInspectorTab(this,'flows')">Flows <span class="tab-count" id="tabCountFlows">0</span></div>
+      </div>
+      <div class="inspector-body" id="inspectorBody">
+        <div class="inspector-loading" id="inspectorLoading" style="display:none">
+          <div class="big-spinner"></div>
+          <span>Fetching table details&hellip;</span>
+        </div>
+        <div id="tabContent"></div>
+      </div>
+    </aside>
 
   </div>
 
@@ -1021,7 +1486,7 @@ function getHTMLPage() {
       network.on('hoverNode', function(params) { showNodeTooltip(params.node, params.event); });
       network.on('blurNode', function() { hideNodeTooltip(); });
 
-      /* Click: highlight + detail */
+      /* Click: highlight + detail + inspector */
       network.on('click', function(params) {
         hideCtxMenu();
         if (params.nodes.length > 0) {
@@ -1029,6 +1494,7 @@ function getHTMLPage() {
           highlightRelated(n);
           showTableDetail(n);
           switchTab('detail');
+          openInspector(n);
         } else {
           clearHighlight();
         }
@@ -1446,6 +1912,338 @@ function getHTMLPage() {
         hideCtxMenu();
       }
     });
+
+    // ── Inspector ──
+    var inspectorData = null;
+    var activeInspectorTab = 'overview';
+    var inspectorTableName = null;
+
+    function openInspector(tableName) {
+      inspectorTableName = tableName;
+      document.getElementById('inspector').classList.remove('collapsed');
+      document.getElementById('inspectorTitle').textContent = tableName;
+      document.getElementById('inspectorSubtitle').textContent = 'Loading details\u2026';
+      document.getElementById('inspectorPills').innerHTML = '';
+      document.getElementById('inspectorLoading').style.display = 'flex';
+      document.getElementById('tabContent').innerHTML = '';
+      switchInspectorTab(document.querySelector('.inspector-tab[data-tab="overview"]'), 'overview');
+      fetchInspectorData(tableName);
+    }
+
+    function closeInspector() {
+      document.getElementById('inspector').classList.add('collapsed');
+      inspectorData = null;
+      inspectorTableName = null;
+    }
+
+    async function fetchInspectorData(tableName) {
+      try {
+        var resp = await fetch('/api/scheme/table/' + encodeURIComponent(tableName) + '/details');
+        var data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Failed to load details');
+        inspectorData = data;
+        document.getElementById('inspectorLoading').style.display = 'none';
+        renderInspectorHeader(data);
+        renderInspectorTab(activeInspectorTab);
+      } catch(err) {
+        document.getElementById('inspectorLoading').style.display = 'none';
+        document.getElementById('tabContent').innerHTML =
+          '<div class="inspector-empty"><div class="empty-emoji">&#x26A0;</div><span>' + iEsc(err.message) + '</span></div>';
+      }
+    }
+
+    function renderInspectorHeader(data) {
+      var t = data.table || {};
+      document.getElementById('inspectorTitle').textContent = t.label || inspectorTableName;
+      document.getElementById('inspectorSubtitle').textContent = inspectorTableName;
+      var pills = document.getElementById('inspectorPills');
+      var fc = (data.fields || []).length;
+      var br = (data.businessRules || []).length;
+      var ui = (data.uiPolicies || []).length;
+      var fl = (data.flows || []).length;
+      var si = (data.scriptIncludes || []).length;
+      pills.innerHTML =
+        '<span class="meta-pill accent">' + fc + ' fields</span>' +
+        (t.isExtendable ? '<span class="meta-pill success">Extendable</span>' : '') +
+        (t.superClass ? '<span class="meta-pill muted">extends ' + iEsc(t.superClass) + '</span>' : '') +
+        (br ? '<span class="meta-pill warning">' + br + ' rules</span>' : '') +
+        (fl ? '<span class="meta-pill accent">' + fl + ' flows</span>' : '');
+      document.getElementById('tabCountFields').textContent = fc;
+      document.getElementById('tabCountUIPolicies').textContent = ui;
+      document.getElementById('tabCountBizRules').textContent = br;
+      document.getElementById('tabCountScriptIncludes').textContent = si;
+      document.getElementById('tabCountFlows').textContent = fl;
+    }
+
+    function switchInspectorTab(el, tab) {
+      activeInspectorTab = tab;
+      document.querySelectorAll('.inspector-tab').forEach(function(t) { t.classList.remove('active'); });
+      if (el) el.classList.add('active');
+      if (inspectorData) renderInspectorTab(tab);
+    }
+
+    function renderInspectorTab(tab) {
+      var c = document.getElementById('tabContent');
+      if (!inspectorData) { c.innerHTML = ''; return; }
+      if (tab === 'overview') iRenderOverview(c);
+      else if (tab === 'fields') iRenderFields(c);
+      else if (tab === 'uipolicies') iRenderUIPolicies(c);
+      else if (tab === 'bizrules') iRenderBizRules(c);
+      else if (tab === 'scriptincludes') iRenderScriptIncludes(c);
+      else if (tab === 'flows') iRenderFlows(c);
+    }
+
+    function iRenderOverview(c) {
+      var d = inspectorData;
+      var t = d.table || {};
+      var m = d.metrics || {};
+      var dep = d.dependencies || { incoming: [], outgoing: [] };
+      var fc = (d.fields || []).length;
+      var mf = (d.fields || []).filter(function(f){ return f.mandatory; }).length;
+      var rf = (d.fields || []).filter(function(f){ return f.reference; }).length;
+      var html = '<div class="overview-grid">';
+      html += iOvCard(fc, 'Fields', mf + ' mandatory');
+      html += iOvCard((d.businessRules||[]).length, 'Business Rules', (d.businessRules||[]).filter(function(r){return r.active;}).length + ' active');
+      html += iOvCard((d.uiPolicies||[]).length, 'UI Policies', (d.uiPolicies||[]).filter(function(p){return p.active;}).length + ' active');
+      html += iOvCard((d.flows||[]).length, 'Flows', (d.flows||[]).filter(function(f){return f.active;}).length + ' active');
+      html += iOvCard(rf, 'Ref Fields', 'foreign keys');
+      html += iOvCard((d.scriptIncludes||[]).length, 'Script Includes', 'referenced');
+      html += '</div>';
+      if (m.complexity != null) {
+        html += '<div class="rule-field"><div class="rule-field-label">Complexity Score</div>';
+        html += '<div style="height:5px;background:var(--border);border-radius:99px;overflow:hidden;margin-top:4px">';
+        html += '<div style="height:100%;width:' + Math.min(m.complexity, 100) + '%;background:linear-gradient(90deg,var(--accent),#818cf8);border-radius:99px"></div></div></div>';
+      }
+      if (t.superClass) {
+        html += '<div class="rule-field"><div class="rule-field-label">Extends</div>';
+        html += '<div class="rule-field-value"><span class="dep-chip outgoing" onclick="openInspector(\'' + iEsc(t.superClass) + '\')">' +
+          '<span class="dep-dot"></span>' + iEsc(t.superClass) + '</span></div></div>';
+      }
+      if (dep.incoming && dep.incoming.length) {
+        html += '<div class="dep-section"><div class="dep-section-title">Referenced by (' + dep.incoming.length + ')</div><div>';
+        dep.incoming.slice(0,20).forEach(function(r) {
+          html += '<span class="dep-chip incoming" onclick="openInspector(\'' + iEsc(r.table) + '\')">' +
+            '<span class="dep-dot"></span>' + iEsc(r.table) + '</span>';
+        });
+        html += '</div></div>';
+      }
+      if (dep.outgoing && dep.outgoing.length) {
+        html += '<div class="dep-section"><div class="dep-section-title">References (' + dep.outgoing.length + ')</div><div>';
+        dep.outgoing.slice(0,20).forEach(function(r) {
+          html += '<span class="dep-chip outgoing" onclick="openInspector(\'' + iEsc(r.table) + '\')">' +
+            '<span class="dep-dot"></span>' + iEsc(r.table) + '</span>';
+        });
+        html += '</div></div>';
+      }
+      c.innerHTML = html;
+    }
+
+    function iOvCard(val, label, sub) {
+      return '<div class="overview-card"><div class="ov-label">' + label + '</div><div class="ov-value">' + val + '</div><div class="ov-sub">' + sub + '</div></div>';
+    }
+
+    function iRenderFields(c) {
+      var fields = (inspectorData.fields || []).slice();
+      c.innerHTML = '<div class="inspector-search"><span class="search-icon">&#x1F50D;</span><input type="text" placeholder="Filter fields\u2026" oninput="iFilterFields(this)"></div><div id="fieldTableWrap"></div>';
+      iRenderFieldTable(fields, document.getElementById('fieldTableWrap'), '');
+    }
+
+    function iFilterFields(input) {
+      iRenderFieldTable(inspectorData.fields || [], document.getElementById('fieldTableWrap'), input.value.toLowerCase());
+    }
+
+    function iRenderFieldTable(fields, wrap, q) {
+      var filtered = q ? fields.filter(function(f) {
+        return (f.name||'').toLowerCase().includes(q) || (f.label||'').toLowerCase().includes(q) || (f.type||'').toLowerCase().includes(q);
+      }) : fields;
+      if (!filtered.length) { wrap.innerHTML = '<div class="inspector-empty"><div class="empty-emoji">&#x1F50D;</div><span>No fields match</span></div>'; return; }
+      var isScript = function(t) { return t && (t.includes('script') || t === 'xml'); };
+      var isRef = function(t) { return t === 'reference'; };
+      var html = '<table class="field-table"><thead><tr><th>Field</th><th>Label</th><th>Type</th><th>Ref</th><th title="Mandatory">M</th><th title="Read Only">RO</th></tr></thead><tbody>';
+      filtered.forEach(function(f) {
+        var tc = isRef(f.type) ? ' ref' : isScript(f.type) ? ' script' : '';
+        html += '<tr>';
+        html += '<td><div class="field-name-cell"><span class="field-name-text">' + iEsc(f.name||'') + '</span>';
+        html += '<button class="copy-btn" onclick="iCopyText(\'' + iEsc(f.name||'') + '\',this)" title="Copy field name">&#x2398;</button></div></td>';
+        html += '<td>' + iEsc(f.label||'\u2014') + '</td>';
+        html += '<td><span class="type-badge' + tc + '">' + iEsc(f.type||'\u2014') + '</span></td>';
+        html += '<td>' + (f.reference ? '<span class="type-badge ref">' + iEsc(f.reference) + '</span>' : '\u2014') + '</td>';
+        html += '<td><span class="bool-dot ' + (f.mandatory ? 'yes' : 'no') + '"></span></td>';
+        html += '<td><span class="bool-dot ' + (f.readOnly ? 'yes' : 'no') + '"></span></td>';
+        html += '</tr>';
+      });
+      html += '</tbody></table>';
+      wrap.innerHTML = html;
+    }
+
+    function iRenderUIPolicies(c) {
+      var policies = inspectorData.uiPolicies || [];
+      var actions = inspectorData.uiPolicyActions || [];
+      if (!policies.length) { c.innerHTML = iEmptyState('&#x1F6AB;', 'No UI Policies found for this table'); return; }
+      c.innerHTML = '<div class="inspector-search"><span class="search-icon">&#x1F50D;</span><input type="text" placeholder="Filter policies\u2026" oninput="iFilterCards(this,\'uiPolicyCards\')"></div><div id="uiPolicyCards"></div>';
+      var wrap = document.getElementById('uiPolicyCards');
+      var html = '';
+      policies.forEach(function(p) {
+        var pActions = actions.filter(function(a){ return a.uiPolicyId === p.sysId; });
+        html += '<div class="rule-card" data-search="' + iEsc(((p.name||'')+' '+(p.description||'')).toLowerCase()) + '">';
+        html += '<div class="rule-card-header" onclick="iToggleCard(this.parentElement)">';
+        html += '<span class="meta-pill ' + (p.active ? 'success' : 'muted') + '">' + (p.active ? 'Active' : 'Inactive') + '</span>';
+        html += '<span class="rule-name">' + iEsc(p.name||'Unnamed') + '</span>';
+        if (pActions.length) html += '<span class="meta-pill accent">' + pActions.length + ' actions</span>';
+        html += '<span class="rule-chevron">&#x25B6;</span></div>';
+        html += '<div class="rule-card-body">';
+        html += '<div class="rule-meta-row">';
+        if (p.description) html += '<span class="meta-pill muted">' + iEsc(p.description) + '</span>';
+        if (p.runScripts) html += '<span class="meta-pill warning">Runs Scripts</span>';
+        html += '</div>';
+        if (p.conditions) html += '<div class="rule-field"><div class="rule-field-label">Condition</div><div class="rule-field-value">' + iEsc(p.conditions) + '</div></div>';
+        if (pActions.length) {
+          html += '<div class="rule-field"><div class="rule-field-label">Field Actions</div>';
+          html += '<table class="field-table"><thead><tr><th>Field</th><th>Mandatory</th><th>Visible</th><th>Read Only</th></tr></thead><tbody>';
+          pActions.forEach(function(a) {
+            html += '<tr><td><span class="field-name-text">' + iEsc(a.field||'\u2014') + '</span></td>';
+            html += '<td>' + iFmtTriState(a.mandatory) + '</td><td>' + iFmtTriState(a.visible) + '</td><td>' + iFmtTriState(a.readOnly) + '</td></tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+        if (p.scriptTrue) html += '<div class="rule-field"><div class="rule-field-label">Script (True)</div>' + iCodeBlock(p.scriptTrue) + '</div>';
+        if (p.scriptFalse) html += '<div class="rule-field"><div class="rule-field-label">Script (False)</div>' + iCodeBlock(p.scriptFalse) + '</div>';
+        html += '</div></div>';
+      });
+      wrap.innerHTML = html;
+    }
+
+    function iRenderBizRules(c) {
+      var rules = inspectorData.businessRules || [];
+      if (!rules.length) { c.innerHTML = iEmptyState('&#x1F6AB;', 'No Business Rules found for this table'); return; }
+      c.innerHTML = '<div class="inspector-search"><span class="search-icon">&#x1F50D;</span><input type="text" placeholder="Filter rules\u2026" oninput="iFilterCards(this,\'bizRuleCards\')"></div><div id="bizRuleCards"></div>';
+      var wrap = document.getElementById('bizRuleCards');
+      var html = '';
+      rules.forEach(function(r) {
+        html += '<div class="rule-card" data-search="' + iEsc(((r.name||'')+' '+(r.when||'')).toLowerCase()) + '">';
+        html += '<div class="rule-card-header" onclick="iToggleCard(this.parentElement)">';
+        html += '<span class="meta-pill ' + (r.active ? 'success' : 'muted') + '">' + (r.active ? 'Active' : 'Inactive') + '</span>';
+        html += '<span class="rule-name">' + iEsc(r.name||'Unnamed') + '</span>';
+        if (r.when) html += '<span class="meta-pill accent">' + iEsc(r.when) + '</span>';
+        if (r.abortAction) html += '<span class="meta-pill warning">Abort</span>';
+        html += '<span class="rule-chevron">&#x25B6;</span></div>';
+        html += '<div class="rule-card-body"><div class="rule-meta-row">';
+        if (r.order) html += '<span class="meta-pill muted">Order: ' + iEsc(String(r.order)) + '</span>';
+        if (r.addMessage) html += '<span class="meta-pill warning">Adds Message</span>';
+        html += '</div>';
+        if (r.filterCondition) html += '<div class="rule-field"><div class="rule-field-label">Filter Condition</div><div class="rule-field-value">' + iEsc(r.filterCondition) + '</div></div>';
+        if (r.message) html += '<div class="rule-field"><div class="rule-field-label">Message</div><div class="rule-field-value">' + iEsc(r.message) + '</div></div>';
+        if (r.script) html += '<div class="rule-field"><div class="rule-field-label">Script</div>' + iCodeBlock(r.script) + '</div>';
+        html += '</div></div>';
+      });
+      wrap.innerHTML = html;
+    }
+
+    function iRenderScriptIncludes(c) {
+      var includes = inspectorData.scriptIncludes || [];
+      if (!includes.length) { c.innerHTML = iEmptyState('&#x1F4DC;', 'No Script Includes found'); return; }
+      c.innerHTML = '<div class="inspector-search"><span class="search-icon">&#x1F50D;</span><input type="text" placeholder="Filter includes\u2026" oninput="iFilterCards(this,\'siCards\')"></div><div id="siCards"></div>';
+      var wrap = document.getElementById('siCards');
+      var html = '';
+      includes.forEach(function(inc) {
+        html += '<div class="rule-card" data-search="' + iEsc(((inc.name||'')+' '+(inc.description||'')).toLowerCase()) + '">';
+        html += '<div class="rule-card-header" onclick="iToggleCard(this.parentElement)">';
+        html += '<span class="meta-pill ' + (inc.active ? 'success' : 'muted') + '">' + (inc.active ? 'Active' : 'Inactive') + '</span>';
+        html += '<span class="rule-name">' + iEsc(inc.name||'Unnamed') + '</span>';
+        if (inc.access) html += '<span class="meta-pill muted">' + iEsc(inc.access) + '</span>';
+        html += '<button class="copy-btn" style="opacity:1;margin-right:4px" onclick="event.stopPropagation();iCopyText(\'' + iEsc(inc.name||'') + '\',this)" title="Copy name">&#x2398;</button>';
+        html += '<span class="rule-chevron">&#x25B6;</span></div>';
+        html += '<div class="rule-card-body">';
+        if (inc.description) html += '<div class="rule-field"><div class="rule-field-label">Description</div><div class="rule-field-value">' + iEsc(inc.description) + '</div></div>';
+        if (inc.apiName) html += '<div class="rule-field"><div class="rule-field-label">API Name</div><div class="rule-field-value"><span class="field-name-text">' + iEsc(inc.apiName) + '</span></div></div>';
+        if (inc.scope) html += '<div class="rule-field"><div class="rule-field-label">Scope</div><div class="rule-field-value">' + iEsc(inc.scope) + '</div></div>';
+        if (inc.script) html += '<div class="rule-field"><div class="rule-field-label">Script</div>' + iCodeBlock(inc.script) + '</div>';
+        html += '</div></div>';
+      });
+      wrap.innerHTML = html;
+    }
+
+    function iRenderFlows(c) {
+      var flows = inspectorData.flows || [];
+      if (!flows.length) { c.innerHTML = iEmptyState('&#x26A1;', 'No Flows found for this table'); return; }
+      c.innerHTML = '<div class="inspector-search"><span class="search-icon">&#x1F50D;</span><input type="text" placeholder="Filter flows\u2026" oninput="iFilterCards(this,\'flowCards\')"></div><div id="flowCards"></div>';
+      var wrap = document.getElementById('flowCards');
+      var html = '';
+      flows.forEach(function(f) {
+        html += '<div class="rule-card" data-search="' + iEsc(((f.name||'')+' '+(f.description||'')).toLowerCase()) + '">';
+        html += '<div class="rule-card-header" onclick="iToggleCard(this.parentElement)">';
+        html += '<span class="meta-pill ' + (f.active ? 'success' : 'muted') + '">' + (f.active ? 'Active' : 'Inactive') + '</span>';
+        html += '<span class="rule-name">' + iEsc(f.name||'Unnamed') + '</span>';
+        if (f.triggerType) html += '<span class="meta-pill accent">' + iEsc(f.triggerType) + '</span>';
+        if (f.status) html += '<span class="meta-pill muted">' + iEsc(f.status) + '</span>';
+        html += '<span class="rule-chevron">&#x25B6;</span></div>';
+        html += '<div class="rule-card-body">';
+        if (f.description) html += '<div class="rule-field"><div class="rule-field-label">Description</div><div class="rule-field-value">' + iEsc(f.description) + '</div></div>';
+        if (f.runAs) html += '<div class="rule-field"><div class="rule-field-label">Run As</div><div class="rule-field-value">' + iEsc(f.runAs) + '</div></div>';
+        html += '</div></div>';
+      });
+      wrap.innerHTML = html;
+    }
+
+    // Inspector helpers
+    function iEsc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+    function iEmptyState(icon, msg) {
+      return '<div class="inspector-empty"><div class="empty-emoji">' + icon + '</div><span>' + msg + '</span></div>';
+    }
+    function iToggleCard(card) { card.classList.toggle('open'); }
+    function iFilterCards(input, containerId) {
+      var q = input.value.toLowerCase();
+      document.getElementById(containerId).querySelectorAll('.rule-card').forEach(function(card) {
+        card.style.display = (!q || (card.getAttribute('data-search')||'').includes(q)) ? '' : 'none';
+      });
+    }
+    function iFmtTriState(val) {
+      if (val === 'true' || val === true) return '<span class="bool-dot yes"></span>';
+      if (val === 'false' || val === false) return '<span class="bool-dot no"></span>';
+      return '<span style="color:var(--text-muted);font-size:11px">\u2014</span>';
+    }
+    function iCodeBlock(code) {
+      var id = 'cb_' + Math.random().toString(36).slice(2);
+      return '<div class="code-block" id="' + id + '">' +
+        '<button class="code-copy-btn" onclick="iCopyCode(\'' + id + '\',this)">Copy</button>' +
+        iSyntaxHighlight(code || '') + '</div>';
+    }
+    function iSyntaxHighlight(code) {
+      var e = iEsc(code);
+      e = e.replace(/(\/\/[^\n]*)/g, '<span class="tok-cmt">$1</span>');
+      e = e.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="tok-cmt">$1</span>');
+      e = e.replace(/(&#39;[^&#39;]*&#39;|&quot;[^&quot;]*&quot;)/g, '<span class="tok-str">$1</span>');
+      e = e.replace(/\b(var|let|const|function|return|if|else|for|while|new|this|true|false|null|undefined|typeof|instanceof|try|catch|throw|class|extends|import|export|async|await)\b/g, '<span class="tok-kw">$1</span>');
+      e = e.replace(/\b(\d+\.?\d*)\b/g, '<span class="tok-num">$1</span>');
+      e = e.replace(/([a-zA-Z_$][\w$]*)(?=\s*\()/g, '<span class="tok-fn">$1</span>');
+      return e;
+    }
+    function iCopyText(text, btn) {
+      navigator.clipboard.writeText(text).then(function() {
+        btn.classList.add('copied'); btn.textContent = '\u2713';
+        setTimeout(function() { btn.classList.remove('copied'); btn.innerHTML = '&#x2398;'; }, 1500);
+      }).catch(function() {
+        var ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        btn.classList.add('copied');
+        setTimeout(function() { btn.classList.remove('copied'); btn.innerHTML = '&#x2398;'; }, 1500);
+      });
+    }
+    function iCopyCode(blockId, btn) {
+      var el = document.getElementById(blockId);
+      var text = el ? el.innerText.replace(/^Copy\n/, '') : '';
+      navigator.clipboard.writeText(text).then(function() {
+        btn.textContent = 'Copied!'; btn.classList.add('copied');
+        setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+      }).catch(function() {
+        var ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+      });
+    }
   <\/script>
 </body>
 </html>`;
