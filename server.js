@@ -357,6 +357,6 @@ function getHTMLPage() {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(\`ServiceNow Scheme Mapper running on port \${PORT}\`);
+  console.log(`ServiceNow Scheme Mapper running on port ${PORT}`);
 });
 
