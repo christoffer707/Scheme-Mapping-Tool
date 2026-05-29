@@ -6,7 +6,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// No timeout on scheme generation — large instances can take many minutes
+// Timeout middleware for the scheme generation endpoint (120 seconds)
+app.use('/api/scheme/generate', (req, res, next) => {
+  res.setTimeout(120000, () => {
+    res.status(503).json({
+      error: 'Request timed out after 120 seconds. Try reducing the table limit or check that your ServiceNow instance is reachable.'
+    });
+  });
+  next();
+});
 
 // Scheme map cache
 let schemeMapCache = null;
@@ -16,7 +24,7 @@ let mapperInstance = null;
 // API endpoint to generate scheme map with analysis
 app.post('/api/scheme/generate', async (req, res) => {
   try {
-    let { instance, username, password, tableLimit = 10000 } = req.body;
+    let { instance, username, password, tableLimit = 50 } = req.body;
 
     if (!instance || !username || !password) {
       return res.status(400).json({ error: 'Missing required fields: instance, username, password' });
@@ -35,7 +43,7 @@ app.post('/api/scheme/generate', async (req, res) => {
       });
     }
 
-    tableLimit = Math.max(1, parseInt(tableLimit) || 10000);
+    tableLimit = Math.max(1, Math.min(parseInt(tableLimit) || 50, 500));
 
     console.log(`[generate] Starting scheme map for instance="${instance}", tableLimit=${tableLimit}`);
 
@@ -66,7 +74,7 @@ app.post('/api/scheme/generate', async (req, res) => {
     console.error('[generate] Error:', error.message);
     if (error.message.includes('timed out') || error.code === 'ECONNABORTED') {
       return res.status(503).json({
-        error: 'ServiceNow request timed out: ' + error.message + '. Check your instance connectivity and try again.'
+        error: 'ServiceNow request timed out: ' + error.message + '. Try reducing the table limit or check your instance connectivity.'
       });
     }
     if (error.message.includes('401') || error.message.includes('Unauthorized')) {
@@ -1074,9 +1082,8 @@ function getHTMLPage() {
               </div>
             </div>
             <div class="form-group">
-              <label for="tableLimit">Table Limit <span style="color:var(--text-muted);font-weight:400">(0 = no limit)</span></label>
-              <input type="number" id="tableLimit" value="10000" min="1" placeholder="10000">
-
+              <label for="tableLimit">Table Limit <span style="color:var(--text-muted);font-weight:400">(1 – 500)</span></label>
+              <input type="number" id="tableLimit" value="50" min="1" max="500">
             </div>
             <div id="statusBanner" class="status-banner"></div>
             <button class="btn btn-primary" id="generateBtn" onclick="generateScheme()">
@@ -1231,8 +1238,7 @@ function getHTMLPage() {
     var currentScheme = null;
     var currentAnalysis = null;
     var physicsEnabled = true;
-    var progressTimer = null;
-
+    var warningTimer = null;
     var activeFilter = 'all';
     var searchQuery = '';
     var highlightedNode = null;
@@ -1301,7 +1307,7 @@ function getHTMLPage() {
       var instance = document.getElementById('instance').value.trim();
       var username = document.getElementById('username').value.trim();
       var password = document.getElementById('password').value;
-      var tableLimit = parseInt(document.getElementById('tableLimit').value) || 10000;
+      var tableLimit = parseInt(document.getElementById('tableLimit').value) || 50;
 
       if (!instance || !username || !password) {
         setStatus('error', '&#x26A0;', 'Please fill in all connection fields.');
@@ -1317,13 +1323,11 @@ function getHTMLPage() {
       }
 
       setLoading(true);
-      setStatus('loading', '&#x23F3;', 'Connecting to ' + instance + '.service-now.com\u2026 This may take several minutes for large instances.');
+      setStatus('loading', '&#x23F3;', 'Connecting to ' + instance + '.service-now.com\u2026');
 
-      var progressTimer = setInterval(function() {
-        var elapsed = Math.round((Date.now() - startTime) / 1000);
-        setStatus('loading', '&#x23F3;', 'Still loading\u2026 ' + elapsed + 's elapsed. Fetching all tables from ' + instance + '.');
-      }, 10000);
-      var startTime = Date.now();
+      warningTimer = setTimeout(function() {
+        setStatus('loading', '&#x23F3;', 'Still working\u2026 Large schemas can take up to 2 minutes. Consider reducing the table limit.');
+      }, 30000);
 
       try {
         var response = await fetch('/api/scheme/generate', {
@@ -1332,7 +1336,7 @@ function getHTMLPage() {
           body: JSON.stringify({ instance: instance, username: username, password: password, tableLimit: tableLimit })
         });
 
-        clearInterval(progressTimer);
+        clearTimeout(warningTimer);
         var data = await response.json();
 
         if (!response.ok) throw new Error(data.error || 'Request failed with status ' + response.status);
@@ -1343,7 +1347,6 @@ function getHTMLPage() {
 
         document.getElementById('statTables').textContent = data.summary.totalTables || 0;
         document.getElementById('statFields').textContent = data.summary.totalFields || 0;
-
         document.getElementById('statRelationships').textContent = data.summary.totalRelationships || 0;
         document.getElementById('statHierarchies').textContent = data.summary.inheritanceHierarchies || 0;
 
@@ -1376,7 +1379,7 @@ function getHTMLPage() {
         setLoading(false);
 
       } catch (err) {
-        clearInterval(progressTimer);
+        clearTimeout(warningTimer);
         setStatus('error', '&#x2715;', err.message || 'An unexpected error occurred.');
         setLoading(false);
       }
