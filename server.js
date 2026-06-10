@@ -244,7 +244,7 @@ function getHTMLPage() {
         nodes.push({
           id: name,
           label: entity.label || name,
-          title: \`Table: \${name}\\nFields: \${entity.fields.length}\`,
+          title: \`Table: \${name}\nFields: \${entity.fields.length}\`,
           color: { background: '#0066cc', border: '#003d99', highlight: { background: '#0052a3' } },
           font: { color: 'white', size: 14 }
         });
