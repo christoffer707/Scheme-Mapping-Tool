@@ -13,7 +13,7 @@ let schemaCache = null;
 async function fetchServiceNowSchema(instance, username, password) {
   const auth = Buffer.from(`${username}:${password}`).toString('base64');
   const baseUrl = `https://${instance}.service-now.com/api/now/table/sys_db_object`;
-  
+
   try {
     const response = await axios.get(baseUrl, {
       headers: {
@@ -25,7 +25,7 @@ async function fetchServiceNowSchema(instance, username, password) {
         sysparm_fields: 'name,label,sys_id'
       }
     });
-    
+
     return response.data.result || [];
   } catch (error) {
     throw new Error(`Failed to fetch ServiceNow schema: ${error.message}`);
@@ -36,7 +36,7 @@ async function fetchServiceNowSchema(instance, username, password) {
 async function fetchTableFields(instance, username, password, tableName) {
   const auth = Buffer.from(`${username}:${password}`).toString('base64');
   const baseUrl = `https://${instance}.service-now.com/api/now/table/sys_dictionary`;
-  
+
   try {
     const response = await axios.get(baseUrl, {
       headers: {
@@ -49,7 +49,7 @@ async function fetchTableFields(instance, username, password, tableName) {
         sysparm_fields: 'element,label,internal_type,reference,mandatory'
       }
     });
-    
+
     return response.data.result || [];
   } catch (error) {
     throw new Error(`Failed to fetch fields for ${tableName}: ${error.message}`);
@@ -60,7 +60,7 @@ async function fetchTableFields(instance, username, password, tableName) {
 function generateERD(tables, fields) {
   const entities = {};
   const relationships = [];
-  
+
   tables.forEach(table => {
     const tableFields = fields[table.name] || [];
     entities[table.name] = {
@@ -75,7 +75,7 @@ function generateERD(tables, fields) {
         mandatory: field.mandatory === '1'
       }))
     };
-    
+
     // Track relationships
     tableFields.forEach(field => {
       if (field.reference && field.reference !== table.name) {
@@ -88,7 +88,7 @@ function generateERD(tables, fields) {
       }
     });
   });
-  
+
   return { entities, relationships };
 }
 
@@ -96,24 +96,24 @@ function generateERD(tables, fields) {
 app.post('/api/erd/generate', async (req, res) => {
   try {
     const { instance, username, password } = req.body;
-    
+
     if (!instance || !username || !password) {
       return res.status(400).json({ error: 'Missing required fields: instance, username, password' });
     }
-    
+
     // Fetch all tables
     const tables = await fetchServiceNowSchema(instance, username, password);
-    
+
     // Fetch fields for each table
     const fieldsMap = {};
     for (const table of tables.slice(0, 50)) { // Limit to first 50 for demo
       fieldsMap[table.name] = await fetchTableFields(instance, username, password, table.name);
     }
-    
+
     // Generate ERD
     const erd = generateERD(tables.slice(0, 50), fieldsMap);
     schemaCache = erd;
-    
+
     res.json({
       success: true,
       message: `Generated ERD for ${tables.length} tables`,
@@ -138,8 +138,7 @@ app.get('/', (req, res) => {
 });
 
 function getHTMLPage() {
-  return `
-<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -228,11 +227,11 @@ function getHTMLPage() {
 
         const data = await response.json();
         currentERD = data.erd;
-        messageDiv.innerHTML = `<div class="success">${data.message}</div>`;
+        messageDiv.innerHTML = \`<div class="success">\${data.message}</div>\`;
         visualizeERD(data.erd);
         populateEntityList(data.erd);
       } catch (error) {
-        messageDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+        messageDiv.innerHTML = \`<div class="error">Error: \${error.message}</div>\`;
       }
     }
 
@@ -245,7 +244,7 @@ function getHTMLPage() {
         nodes.push({
           id: name,
           label: entity.label || name,
-          title: `Table: ${name}\nFields: ${entity.fields.length}`,
+          title: \`Table: \${name}\\nFields: \${entity.fields.length}\`,
           color: { background: '#0066cc', border: '#003d99', highlight: { background: '#0052a3' } },
           font: { color: 'white', size: 14 }
         });
@@ -276,27 +275,25 @@ function getHTMLPage() {
     function populateEntityList(erd) {
       const list = document.getElementById('entityList');
       list.innerHTML = '<h3>Tables (' + Object.keys(erd.entities).length + ')</h3>';
-      
+
       Object.entries(erd.entities).forEach(([name, entity]) => {
         const div = document.createElement('div');
         div.className = 'entity-item';
-        div.innerHTML = `
-          <h4>${entity.label || name}</h4>
-          <p>${name}</p>
-          <p>${entity.fields.length} fields</p>
-        `;
+        div.innerHTML = \`
+          <h4>\${entity.label || name}</h4>
+          <p>\${name}</p>
+          <p>\${entity.fields.length} fields</p>
+        \`;
         div.onclick = () => network && network.focus(name, { scale: 1.5, animation: true });
         list.appendChild(div);
       });
     }
   </script>
 </body>
-</html>
-  `;
+</html>`;
 }
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`ServiceNow ERD Visualizer running on port ${PORT}`);
 });
-
