@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Instance Comparison &amp; Analysis — Scheme Mapping Tool</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    /* ── Top Nav ──────────────────────────────────────────────────────── */
+    .topnav {
+      background: #0a0a1a;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,.4);
+    }
+    .topnav .brand { color: #fff; font-weight: 700; font-size: 15px; letter-spacing: .3px; text-decoration: none; }
+    .topnav a { color: #aab; font-size: 13px; text-decoration: none; transition: color .15s; }
+    .topnav a:hover, .topnav a.active { color: #4da6ff; }
+    .topnav .sep { color: #333; }
+
+    /* ── Layout ───────────────────────────────────────────────────────── */
+    .page { max-width: 1200px; margin: 0 auto; padding: 28px 20px 60px; }
+    .page-title { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+    .page-sub   { font-size: 13px; color: #666; margin-bottom: 28px; }
+
+    /* ── Cards ────────────────────────────────────────────────────────── */
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: #555;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-title .icon { font-size: 16px; }
+
+    /* ── Tabs ─────────────────────────────────────────────────────────── */
+    .tabs { display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap; }
+    .tab-btn {
+      padding: 9px 18px;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: #555;
+      transition: all .15s;
+    }
+    .tab-btn:hover  { border-color: #0066cc; color: #0066cc; }
+    .tab-btn.active { border-color: #0066cc; background: #0066cc; color: #fff; }
+
+    /* ── File Upload ──────────────────────────────────────────────────── */
+    .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 640px) { .upload-grid { grid-template-columns: 1fr; } }
+
+    .drop-zone {
+      border: 2px dashed #c0c8d8;
+      border-radius: 8px;
+      padding: 28px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: all .2s;
+      background: #fafbfc;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: #0066cc; background: #f0f7ff; }
+    .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .drop-zone .dz-icon  { font-size: 32px; margin-bottom: 8px; }
+    .drop-zone .dz-label { font-size: 13px; color: #555; }
+    .drop-zone .dz-hint  { font-size: 11px; color: #999; margin-top: 4px; }
+    .drop-zone .dz-file  { font-size: 12px; color: #0066cc; font-weight: 600; margin-top: 8px; word-break: break-all; }
+
+    /* ── Form Controls ────────────────────────────────────────────────── */
+    .form-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+    .form-group { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 180px; }
+    label { font-size: 12px; font-weight: 600; color: #444; }
+    input[type=text], select, textarea {
+      padding: 8px 10px;
+      border: 1px solid #d0d7e2;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color .15s;
+      background: #fff;
+    }
+    input[type=text]:focus, select:focus, textarea:focus { border-color: #0066cc; }
+    textarea { resize: vertical; min-height: 60px; font-family: monospace; }
+
+    .checkbox-group { display: flex; flex-direction: column; gap: 8px; }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+    .checkbox-row input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; accent-color: #0066cc; }
+
+    /* ── Buttons ──────────────────────────────────────────────────────── */
+    .btn {
+      padding: 10px 22px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-primary   { background: #0066cc; color: #fff; }
+    .btn-primary:hover   { background: #0052a3; }
+    .btn-secondary { background: #f0f2f5; color: #333; border: 1px solid #d0d7e2; }
+    .btn-secondary:hover { background: #e4e8ef; }
+    .btn-success   { background: #1a7a4a; color: #fff; }
+    .btn-success:hover   { background: #155f3a; }
+    .btn-danger    { background: #c0392b; color: #fff; }
+    .btn-danger:hover    { background: #a93226; }
+    .btn:disabled  { opacity: .5; cursor: not-allowed; }
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+
+    /* ── Progress ─────────────────────────────────────────────────────── */
+    .progress-wrap { margin-top: 16px; display: none; }
+    .progress-wrap.visible { display: block; }
+    .progress-bar-bg {
+      background: #e8ecf0;
+      border-radius: 99px;
+      height: 8px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #0066cc, #00aaff);
+      border-radius: 99px;
+      transition: width .3s ease;
+      width: 0%;
+    }
+    .progress-label { font-size: 12px; color: #666; }
+
+    /* ── Results ──────────────────────────────────────────────────────── */
+    .results-section { display: none; }
+    .results-section.visible { display: block; }
+
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat-box {
+      background: #f7f9fc;
+      border: 1px solid #e4e8ef;
+      border-radius: 8px;
+      padding: 14px 12px;
+      text-align: center;
+    }
+    .stat-box .stat-val { font-size: 26px; font-weight: 700; color: #0066cc; }
+    .stat-box .stat-lbl { font-size: 11px; color: #777; margin-top: 2px; text-transform: uppercase; letter-spacing: .4px; }
+    .stat-box.green .stat-val { color: #1a7a4a; }
+    .stat-box.red   .stat-val { color: #c0392b; }
+    .stat-box.amber .stat-val { color: #d68910; }
+
+    /* ── Tables ───────────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid #e4e8ef; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th {
+      background: #f0f4f8;
+      padding: 10px 12px;
+      text-align: left;
+      font-weight: 700;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: #555;
+      border-bottom: 1px solid #dde3ec;
+      white-space: nowrap;
+    }
+    tbody td { padding: 9px 12px; border-bottom: 1px solid #f0f2f5; vertical-align: top; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: #f7f9fc; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-green  { background: #d4edda; color: #155724; }
+    .badge-red    { background: #f8d7da; color: #721c24; }
+    .badge-amber  { background: #fff3cd; color: #856404; }
+    .badge-blue   { background: #cce5ff; color: #004085; }
+    .badge-gray   { background: #e2e3e5; color: #383d41; }
+
+    /* ── Column pills ─────────────────────────────────────────────────── */
+    .pill-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .pill {
+      padding: 3px 10px;
+      border-radius: 99px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all .15s;
+    }
+    .pill-added   { background: #d4edda; color: #155724; border-color: #c3e6cb; }
+    .pill-removed { background: #f8d7da; color: #721c24; border-color: #f5c6cb; }
+    .pill-common  { background: #e2e3e5; color: #383d41; border-color: #d6d8db; }
+    .pill-select  { background: #cce5ff; color: #004085; border-color: #b8daff; }
+    .pill-select.selected { background: #0066cc; color: #fff; border-color: #0066cc; }
+
+    /* ── Alerts ───────────────────────────────────────────────────────── */
+    .alert {
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .alert-error   { background: #fdecea; color: #b71c1c; border-left: 4px solid #e53935; }
+    .alert-success { background: #e8f5e9; color: #1b5e20; border-left: 4px solid #43a047; }
+    .alert-info    { background: #e3f2fd; color: #0d47a1; border-left: 4px solid #1e88e5; }
+
+    /* ── Accordion ────────────────────────────────────────────────────── */
+    .accordion-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      padding: 12px 0;
+      border-bottom: 1px solid #eee;
+      font-weight: 600;
+      font-size: 14px;
+      user-select: none;
+    }
+    .accordion-header:hover { color: #0066cc; }
+    .accordion-body { padding-top: 14px; display: none; }
+    .accordion-body.open { display: block; }
+    .accordion-arrow { transition: transform .2s; }
+    .accordion-arrow.open { transform: rotate(180deg); }
+
+    /* ── Spinner ──────────────────────────────────────────────────────── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+
+    /* ── Misc ─────────────────────────────────────────────────────────── */
+    .empty-state { text-align: center; padding: 40px 20px; color: #aaa; font-size: 14px; }
+    .empty-state .es-icon { font-size: 40px; margin-bottom: 10px; }
+    .section-divider { border: none; border-top: 1px solid #eee; margin: 20px 0; }
+    .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; }
+    .text-muted { color: #888; font-size: 12px; }
+    .mt-8  { margin-top: 8px; }
+    .mt-16 { margin-top: 16px; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- ── Top Nav ──────────────────────────────────────────────────────────── -->
+<nav class="topnav">
+  <a href="/" class="brand">⚙ Scheme Mapping Tool</a>
+  <span class="sep">|</span>
+  <a href="/">ERD Visualizer</a>
+  <a href="/comparison" class="active">Compare &amp; Analyze</a>
+</nav>
+
+<!-- ── Page ─────────────────────────────────────────────────────────────── -->
+<div class="page">
+  <div class="page-title">Instance Comparison &amp; Analysis</div>
+  <div class="page-sub">Compare schemas and data between two ServiceNow instance exports, anonymize sensitive columns, discover natural keys, and analyze data quality.</div>
+
+  <!-- ── Mode Tabs ──────────────────────────────────────────────────────── -->
+  <div class="tabs" id="modeTabs">
+    <button class="tab-btn active" data-mode="compare-schemas">🔍 Schema Compare</button>
+    <button class="tab-btn" data-mode="compare-data">📊 Data Compare</button>
+    <button class="tab-btn" data-mode="scrub">🔒 Anonymize</button>
+    <button class="tab-btn" data-mode="analyze">📈 Analyze</button>
+    <button class="tab-btn" data-mode="find-keys">🔑 Find Keys</button>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <!-- SCHEMA COMPARE                                                       -->
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <div id="panel-compare-schemas" class="mode-panel">
+    <div class="card">
+      <div class="card-title"><span class="icon">📁</span> Upload Files</div>
+      <div class="upload-grid">
+        <div class="drop-zone" id="dz-schema-1" data-target="schema-file1">
+          <input type="file" id="schema-file1" accept=".csv,.xlsx,.xls" />
+          <div class="dz-icon">📄</div>
+          <div class="dz-label">Instance 1 — drop file or click</div>
+          <div class="dz-hint">.csv, .xlsx, .xls · max 50 MB</div>
+          <div class="dz-file" id="schema-file1-name"></div>
+        </div>
+        <div class="drop-zone" id="dz-schema-2" data-target="schema-file2">
+          <input type="file" id="schema-file2" accept=".csv,.xlsx,.xls" />
+          <div class="dz-icon">📄</div>
+          <div class="dz-label">Instance 2 — drop file or click</div>
+          <div class="dz-hint">.csv, .xlsx, .xls · max 50 MB</div>
+          <div class="dz-file" id="schema-file2-name"></div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-compare-schemas">
+          <span>🔍 Compare Schemas</span>
+        </button>
+        <button class="btn btn-secondary" id="btn-schema-report" disabled>
+          ⬇ Download Report
+        </button>
+      </div>
+      <div class="progress-wrap" id="prog-schemas">
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="prog-schemas-fill"></div></div>
+        <div class="progress-label" id="prog-schemas-label">Processing…</div>
+      </div>
+    </div>
+
+    <div class="results-section" id="results-schemas">
+      <div id="alert-schemas"></div>
+
+      <!-- Summary stats -->
+      <div class="stat-grid" id="schema-stats"></div>
+
+      <!-- Common columns with type comparison -->
+      <div class="card">
+        <div class="accordion-header" onclick="toggleAccordion('acc-common')">
+          <span>Common Columns <span id="badge-common" class="badge badge-blue"></span></span>
+          <span class="accordion-arrow" id="arr-common">▼</span>
+        </div>
+        <div class="accordion-body open" id="acc-common">
+          <div class="table-wrap">
+            <table id="tbl-common">
+              <thead><tr><th>Column</th><th>Type (File 1)</th><th>Type (File 2)</th><th>Match</th><th>Confidence 1</th><th>Confidence 2</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Added / Removed -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="card">
+          <div class="card-title"><span class="icon">➕</span> Added in File 2</div>
+          <div class="pill-list" id="pills-added"></div>
+        </div>
+        <div class="card">
+          <div class="card-title"><span class="icon">➖</span> Removed from File 1</div>
+          <div class="pill-list" id="pills-removed"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <!-- DATA COMPARE                                                         -->
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <div id="panel-compare-data" class="mode-panel hidden">
+    <div class="card">
+      <div class="card-title"><span class="icon">📁</span> Upload Files</div>
+      <div class="upload-grid">
+        <div class="drop-zone" id="dz-data-1" data-target="data-file1">
+          <input type="file" id="data-file1" accept=".csv,.xlsx,.xls" />
+          <div class="dz-icon">📄</div>
+          <div class="dz-label">Instance 1 — drop file or click</div>
+          <div class="dz-hint">.csv, .xlsx, .xls · max 50 MB</div>
+          <div class="dz-file" id="data-file1-name"></div>
+        </div>
+        <div class="drop-zone" id="dz-data-2" data-target="data-file2">
+          <input type="file" id="data-file2" accept=".csv,.xlsx,.xls" />
+          <div class="dz-icon">📄</div>
+          <div class="dz-label">Instance 2 — drop file or click</div>
+          <div class="dz-hint">.csv, .xlsx, .xls · max 50 MB</div>
+          <div class="dz-file" id="data-file2-name"></div>
+        </div>
+      </div>
+
+      <div class="form-row mt-8">
+        <div class="form-group">
+          <label>Key Columns <span class="text-muted">(comma-separated, required)</span></label>
+          <input type="text" id="data-key-cols" placeholder="e.g. sys_id, number" />
+        </div>
+        <div class="form-group">
+          <label>Compare Columns <span class="text-muted">(comma-separated, blank = all)</span></label>
+          <input type="text" id="data-compare-cols" placeholder="e.g. state, priority, assigned_to" />
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-compare-data">📊 Compare Data</button>
+        <button class="btn btn-secondary" id="btn-data-report" disabled>⬇ Download Report</button>
+      </div>
+      <div class="progress-wrap" id="prog-data">
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="prog-data-fill"></div></div>
+        <div class="progress-label" id="prog-data-label">Processing…</div>
+      </div>
+    </div>
+
+    <div class="results-section" id="results-data">
+      <div id="alert-data"></div>
+      <div class="stat-grid" id="data-stats"></div>
+
+      <!-- Added rows -->
+      <div class="card">
+        <div class="accordion-header" onclick="toggleAccordion('acc-added')">
+          <span>Added Rows <span id="badge-added" class="badge badge-green"></span></span>
+          <span class="accordion-arrow" id="arr-added">▼</span>
+        </div>
+        <div class="accordion-body open" id="acc-added">
+          <div class="table-wrap"><table id="tbl-added"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- Removed rows -->
+      <div class="card">
+        <div class="accordion-header" onclick="toggleAccordion('acc-removed')">
+          <span>Removed Rows <span id="badge-removed" class="badge badge-red"></span></span>
+          <span class="accordion-arrow" id="arr-removed">▼</span>
+        </div>
+        <div class="accordion-body open" id="acc-removed">
+          <div class="table-wrap"><table id="tbl-removed"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- Changed rows -->
+      <div class="card">
+        <div class="accordion-header" onclick="toggleAccordion('acc-changed')">
+          <span>Changed Rows <span id="badge-changed" class="badge badge-amber"></span></span>
+          <span class="accordion-arrow" id="arr-changed">▼</span>
+        </div>
+        <div class="accordion-body open" id="acc-changed">
+          <div class="table-wrap">
+            <table id="tbl-changed">
+              <thead><tr><th>Key</th><th>Column</th><th>Old Value</th><th>New Value</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <!-- ANONYMIZE                                                            -->
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <div id="panel-scrub" class="mode-panel hidden">
+    <div class="card">
+      <div class="card-title"><span class="icon">📁</span> Upload File</div>
+      <div class="drop-zone" id="dz-scrub" data-target="scrub-file" style="max-width:480px;">
+        <input type="file" id="scrub-file" accept=".csv,.xlsx,.xls" />
+        <div class="dz-icon">🔒</div>
+        <div class="dz-label">Drop file or click to upload</div>
+        <div class="dz-hint">.csv, .xlsx, .xls · max 50 MB</div>
+        <div class="dz-file" id="scrub-file-name"></div>
+      </div>
+
+      <div class="mt-16">
+        <label style="font-size:12px;font-weight:600;color:#444;display:block;margin-bottom:6px;">
+          Columns to Anonymize <span class="text-muted">(click to detect, or type below)</span>
+        </label>
+        <div class="pill-list" id="scrub-col-pills"></div>
+        <input type="text" id="scrub-cols-input" placeholder="e.g. email, phone, name" style="margin-top:10px;width:100%;" />
+      </div>
+
+      <div class="form-row mt-8">
+        <div class="form-group">
+          <div class="checkbox-group">
+            <label class="checkbox-row">
+              <input type="checkbox" id="scrub-preserve" checked />
+              Preserve foreign key relationships (consistent substitution)
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="scrub-export-map" checked />
+              Include mapping key sheet in download
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-detect-cols">🔎 Auto-Detect Sensitive Columns</button>
+        <button class="btn btn-danger"  id="btn-scrub">🔒 Anonymize &amp; Download</button>
+      </div>
+      <div class="progress-wrap" id="prog-scrub">
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="prog-scrub-fill"></div></div>
+        <div class="progress-label" id="prog-scrub-label">Processing…</div>
+      </div>
+      <div id="alert-scrub" class="mt-8"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <!-- ANALYZE                                                              -->
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <div id="panel-analyze" class="mode-panel hidden">
+    <div class="card">
+      <div class="card-title"><span class="icon">📁</span> Upload File</div>
+      <div class="drop-zone" id="dz-analyze" data-target="analyze-file" style="max-width:480px;">
+        <input type="file" id="analyze-file" accept=".csv,.xlsx,.xls" />
+        <div class="dz-icon">📈</div>
+        <div class="dz-label">Drop file or click to upload</div>
+        <div class="dz-hint">.csv, .xlsx, .xls · max 50 MB</div>
+        <div class="dz-file" id="analyze-file-name"></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-analyze">📈 Analyze Data</button>
+      </div>
+      <div class="progress-wrap" id="prog-analyze">
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="prog-analyze-fill"></div></div>
+        <div class="progress-label" id="prog-analyze-label">Processing…</div>
+      </div>
+    </div>
+
+    <div class="results-section" id="results-analyze">
+      <div id="alert-analyze"></div>
+      <div class="stat-grid" id="analyze-stats"></div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">🔬</span> Column Details</div>
+        <div class="table-wrap">
+          <table id="tbl-analyze">
+            <thead>
+              <tr>
+                <th>Column</th>
+                <th>Type</th>
+                <th>Confidence</th>
+                <th>Non-Null</th>
+                <th>Null %</th>
+                <th>Unique</th>
+                <th>Uniqueness %</th>
+                <th>Min</th>
+                <th>Max</th>
+                <th>Mean</th>
+                <th>Top Value</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <!-- FIND KEYS                                                            -->
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <div id="panel-find-keys" class="mode-panel hidden">
+    <div class="card">
+      <div class="card-title"><span class="icon">📁</span> Upload File</div>
+      <div class="drop-zone" id="dz-keys" data-target="keys-file" style="max-width:480px;">
+        <input type="file" id="keys-file" accept=".csv,.xlsx,.xls" />
+        <div class="dz-icon">🔑</div>
+        <div class="dz-label">Drop file or click to upload</div>
+        <div class="dz-hint">.csv, .xlsx, .xls · max 50 MB</div>
+        <div class="dz-file" id="keys-file-name"></div>
+      </div>
+
+      <div class="mt-16">
+        <label style="font-size:12px;font-weight:600;color:#444;display:block;margin-bottom:6px;">
+          Columns to Consider <span class="text-muted">(click to toggle, blank = all)</span>
+        </label>
+        <div class="pill-list" id="keys-col-pills"></div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-find-keys">🔑 Find Natural Keys</button>
+      </div>
+      <div class="progress-wrap" id="prog-keys">
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="prog-keys-fill"></div></div>
+        <div class="progress-label" id="prog-keys-label">Running Apriori search…</div>
+      </div>
+    </div>
+
+    <div class="results-section" id="results-keys">
+      <div id="alert-keys"></div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">🏆</span> Primary Key Recommendation</div>
+        <div id="keys-primary" class="mt-8"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">🔑</span> All Minimal Key Combinations</div>
+        <div id="keys-combos" class="mt-8"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">📊</span> Column Uniqueness Stats</div>
+        <div class="table-wrap">
+          <table id="tbl-keys-stats">
+            <thead><tr><th>Column</th><th>Unique Values</th><th>Uniqueness %</th><th>Is Unique Key?</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<script src="/js/comparison.js"></script>
+</body>
+</html>

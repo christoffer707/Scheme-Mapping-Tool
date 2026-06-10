@@ -1,0 +1,594 @@
+/**
+ * dataProcessing.js
+ * Core data processing utilities for schema comparison, data diffing,
+ * anonymization, type detection, natural key discovery, and analysis.
+ * Ported and adapted from DataDragon V2.1 logic.
+ */
+
+import { v4 as uuidv4 } from 'uuid';
+
+// ---------------------------------------------------------------------------
+// Type Detection
+// ---------------------------------------------------------------------------
+
+const TYPE_PATTERNS = {
+  email:       /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/,
+  phone:       /^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$/,
+  ssn:         /^\d{3}-\d{2}-\d{4}$/,
+  credit_card: /^\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}$/,
+  ip_address:  /^(\d{1,3}\.){3}\d{1,3}$/,
+  uuid:        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  url:         /^https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)$/,
+  date:        /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/,
+  currency:    /^[\$€£¥]?\s*\d{1,3}(,\d{3})*(\.\d{2})?$/,
+  boolean:     /^(true|false|yes|no|1|0|y|n)$/i,
+  integer:     /^-?\d+$/,
+  float:       /^-?\d+\.\d+$/,
+  zip_code:    /^\d{5}(-\d{4})?$/,
+};
+
+const NAME_HINTS = {
+  email:       ['email', 'e_mail', 'mail'],
+  phone:       ['phone', 'mobile', 'cell', 'fax', 'tel'],
+  ssn:         ['ssn', 'social_security', 'sin'],
+  credit_card: ['credit_card', 'card_number', 'cc_num'],
+  ip_address:  ['ip', 'ip_address', 'ipaddr'],
+  uuid:        ['uuid', 'guid', 'sys_id'],
+  url:         ['url', 'link', 'href', 'website'],
+  date:        ['date', 'time', 'created', 'updated', 'modified', 'opened', 'closed', 'resolved'],
+  currency:    ['price', 'cost', 'amount', 'salary', 'revenue', 'fee', 'charge'],
+  boolean:     ['active', 'enabled', 'flag', 'is_', 'has_'],
+  zip_code:    ['zip', 'postal', 'postcode'],
+  name:        ['name', 'first_name', 'last_name', 'full_name', 'fname', 'lname'],
+  address:     ['address', 'street', 'city', 'state', 'country', 'location'],
+};
+
+/**
+ * Detect the semantic type of a column based on its values and name.
+ * Returns { type, confidence } where confidence is 0–1.
+ */
+export function detectSemanticType(columnData, columnName) {
+  const colLower = (columnName || '').toLowerCase();
+  const sample = columnData
+    .filter(v => v !== null && v !== undefined && String(v).trim() !== '')
+    .slice(0, 200)
+    .map(v => String(v).trim());
+
+  if (sample.length === 0) return { type: 'unknown', confidence: 0 };
+
+  // Name-hint boost
+  for (const [type, hints] of Object.entries(NAME_HINTS)) {
+    if (hints.some(h => colLower.includes(h))) {
+      // Verify with pattern if one exists
+      if (TYPE_PATTERNS[type]) {
+        const matchRate = sample.filter(v => TYPE_PATTERNS[type].test(v)).length / sample.length;
+        if (matchRate > 0.5) return { type, confidence: Math.min(0.5 + matchRate * 0.5, 1) };
+      } else {
+        return { type, confidence: 0.75 };
+      }
+    }
+  }
+
+  // Pattern matching
+  for (const [type, pattern] of Object.entries(TYPE_PATTERNS)) {
+    const matchRate = sample.filter(v => pattern.test(v)).length / sample.length;
+    if (matchRate > 0.8) return { type, confidence: matchRate };
+  }
+
+  // Numeric fallback
+  const numericRate = sample.filter(v => !isNaN(Number(v))).length / sample.length;
+  if (numericRate > 0.9) {
+    const hasDecimal = sample.some(v => v.includes('.'));
+    return { type: hasDecimal ? 'float' : 'integer', confidence: numericRate };
+  }
+
+  return { type: 'string', confidence: 1 };
+}
+
+// ---------------------------------------------------------------------------
+// Schema Comparison
+// ---------------------------------------------------------------------------
+
+/**
+ * Compare two datasets' schemas (column names and inferred types).
+ * df1 / df2 are arrays of row objects.
+ */
+export function compareSchemas(df1, df2) {
+  const cols1 = df1.length > 0 ? Object.keys(df1[0]) : [];
+  const cols2 = df2.length > 0 ? Object.keys(df2[0]) : [];
+
+  const set1 = new Set(cols1);
+  const set2 = new Set(cols2);
+
+  const common  = cols1.filter(c => set2.has(c));
+  const added   = cols2.filter(c => !set1.has(c));   // in df2 but not df1
+  const removed = cols1.filter(c => !set2.has(c));   // in df1 but not df2
+
+  // Build per-column type info
+  const typeInfo1 = {};
+  const typeInfo2 = {};
+
+  for (const col of cols1) {
+    typeInfo1[col] = detectSemanticType(df1.map(r => r[col]), col);
+  }
+  for (const col of cols2) {
+    typeInfo2[col] = detectSemanticType(df2.map(r => r[col]), col);
+  }
+
+  const comparisonData = common.map(col => ({
+    column:      col,
+    type_file1:  typeInfo1[col]?.type  ?? 'unknown',
+    type_file2:  typeInfo2[col]?.type  ?? 'unknown',
+    type_match:  typeInfo1[col]?.type === typeInfo2[col]?.type,
+    conf_file1:  +(typeInfo1[col]?.confidence ?? 0).toFixed(3),
+    conf_file2:  +(typeInfo2[col]?.confidence ?? 0).toFixed(3),
+  }));
+
+  return {
+    common,
+    added,
+    removed,
+    comparison_data: comparisonData,
+    summary: {
+      total_file1: cols1.length,
+      total_file2: cols2.length,
+      common_count: common.length,
+      added_count:  added.length,
+      removed_count: removed.length,
+      type_mismatches: comparisonData.filter(r => !r.type_match).length,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Data Comparison
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a composite key string from a row using the given key columns.
+ */
+function buildKey(row, keyColumns) {
+  return keyColumns.map(k => String(row[k] ?? '')).join('||');
+}
+
+/**
+ * Compare two datasets row-by-row using key columns.
+ * Returns added_rows, removed_rows, changed_rows, and a summary.
+ */
+export function compareData(df1, df2, keyColumns, compareColumns) {
+  if (!keyColumns || keyColumns.length === 0) {
+    throw new Error('At least one key column is required for data comparison.');
+  }
+
+  // Index df1 and df2 by composite key
+  const map1 = new Map();
+  const map2 = new Map();
+
+  for (const row of df1) map1.set(buildKey(row, keyColumns), row);
+  for (const row of df2) map2.set(buildKey(row, keyColumns), row);
+
+  const keys1 = new Set(map1.keys());
+  const keys2 = new Set(map2.keys());
+
+  // Rows only in df2 (added)
+  const added_rows = [];
+  for (const k of keys2) {
+    if (!keys1.has(k)) added_rows.push(map2.get(k));
+  }
+
+  // Rows only in df1 (removed)
+  const removed_rows = [];
+  for (const k of keys1) {
+    if (!keys2.has(k)) removed_rows.push(map1.get(k));
+  }
+
+  // Rows in both — check for changes
+  const changed_rows = [];
+  const cols = compareColumns && compareColumns.length > 0
+    ? compareColumns
+    : (df1.length > 0 ? Object.keys(df1[0]).filter(c => !keyColumns.includes(c)) : []);
+
+  for (const k of keys1) {
+    if (!keys2.has(k)) continue;
+    const r1 = map1.get(k);
+    const r2 = map2.get(k);
+    const diffs = [];
+    for (const col of cols) {
+      const v1 = r1[col] ?? null;
+      const v2 = r2[col] ?? null;
+      if (String(v1) !== String(v2)) {
+        diffs.push({ column: col, old_value: v1, new_value: v2 });
+      }
+    }
+    if (diffs.length > 0) {
+      changed_rows.push({ key: k, key_values: Object.fromEntries(keyColumns.map(c => [c, r1[c]])), changes: diffs });
+    }
+  }
+
+  return {
+    added_rows,
+    removed_rows,
+    changed_rows,
+    summary: {
+      total_file1:   df1.length,
+      total_file2:   df2.length,
+      added_count:   added_rows.length,
+      removed_count: removed_rows.length,
+      changed_count: changed_rows.length,
+      unchanged_count: [...keys1].filter(k => keys2.has(k)).length - changed_rows.length,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Anonymization / Scrubbing
+// ---------------------------------------------------------------------------
+
+const FAKE_FIRST_NAMES = ['Alex','Jordan','Taylor','Morgan','Casey','Riley','Avery','Quinn','Skyler','Dakota'];
+const FAKE_LAST_NAMES  = ['Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Wilson','Moore'];
+const FAKE_DOMAINS     = ['example.com','test.org','sample.net','demo.io','placeholder.co'];
+
+function fakeEmail(seed) {
+  const i = seed % FAKE_FIRST_NAMES.length;
+  return `${FAKE_FIRST_NAMES[i].toLowerCase()}.${seed}@${FAKE_DOMAINS[seed % FAKE_DOMAINS.length]}`;
+}
+function fakeName(seed) {
+  return `${FAKE_FIRST_NAMES[seed % FAKE_FIRST_NAMES.length]} ${FAKE_LAST_NAMES[seed % FAKE_LAST_NAMES.length]}`;
+}
+function fakePhone(seed) {
+  const n = String(seed).padStart(7, '0').slice(0, 7);
+  return `555-${n.slice(0,3)}-${n.slice(3)}`;
+}
+function fakeSSN(seed) {
+  const n = String(seed).padStart(9, '0');
+  return `${n.slice(0,3)}-${n.slice(3,5)}-${n.slice(5)}`;
+}
+function fakeIP(seed) {
+  return `10.${seed % 256}.${(seed >> 8) % 256}.${(seed >> 16) % 256}`;
+}
+function fakeAddress(seed) {
+  return `${(seed % 9999) + 1} Main St, City ${seed % 100}, ST ${String(seed % 99999).padStart(5,'0')}`;
+}
+
+function generateFakeValue(originalValue, semanticType, seed) {
+  switch (semanticType) {
+    case 'email':       return fakeEmail(seed);
+    case 'phone':       return fakePhone(seed);
+    case 'ssn':         return fakeSSN(seed);
+    case 'ip_address':  return fakeIP(seed);
+    case 'name':        return fakeName(seed);
+    case 'address':     return fakeAddress(seed);
+    case 'uuid':        return uuidv4();
+    case 'credit_card': return `4000-0000-0000-${String(seed % 9999).padStart(4,'0')}`;
+    case 'url':         return `https://example.com/user/${seed}`;
+    case 'integer':     return seed;
+    case 'float':       return +(seed * 1.337).toFixed(2);
+    case 'currency':    return `$${(seed * 9.99).toFixed(2)}`;
+    default:            return `REDACTED_${seed}`;
+  }
+}
+
+/**
+ * Anonymize selected columns in a dataset.
+ * When preserveRelationships is true, the same original value always maps to
+ * the same fake value (consistent substitution across the dataset).
+ *
+ * Returns { data, mapping } where mapping is { column -> { original -> fake } }.
+ */
+export function scrubDataFrame(df, columnsToScrub, preserveRelationships = true) {
+  if (!df || df.length === 0) return { data: [], mapping: {} };
+
+  // Detect semantic types for scrubbed columns
+  const semanticTypes = {};
+  for (const col of columnsToScrub) {
+    semanticTypes[col] = detectSemanticType(df.map(r => r[col]), col).type;
+  }
+
+  // Build value→fake maps per column (for relationship preservation)
+  const valueMaps = {};
+  for (const col of columnsToScrub) {
+    valueMaps[col] = new Map();
+  }
+
+  let globalSeed = 1;
+
+  const scrubbed = df.map(row => {
+    const newRow = { ...row };
+    for (const col of columnsToScrub) {
+      if (!(col in row)) continue;
+      const original = row[col];
+      const key = String(original ?? '');
+
+      if (preserveRelationships) {
+        if (!valueMaps[col].has(key)) {
+          valueMaps[col].set(key, generateFakeValue(original, semanticTypes[col], globalSeed++));
+        }
+        newRow[col] = valueMaps[col].get(key);
+      } else {
+        newRow[col] = generateFakeValue(original, semanticTypes[col], globalSeed++);
+      }
+    }
+    return newRow;
+  });
+
+  // Build exportable mapping
+  const mapping = {};
+  for (const col of columnsToScrub) {
+    mapping[col] = Object.fromEntries(valueMaps[col]);
+  }
+
+  return { data: scrubbed, mapping };
+}
+
+// ---------------------------------------------------------------------------
+// Data Analysis
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute basic statistics for a numeric array.
+ */
+function numericStats(values) {
+  const nums = values.map(Number).filter(n => !isNaN(n));
+  if (nums.length === 0) return null;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const sum = nums.reduce((a, b) => a + b, 0);
+  const mean = sum / nums.length;
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  const variance = nums.reduce((acc, v) => acc + (v - mean) ** 2, 0) / nums.length;
+  return {
+    min:    sorted[0],
+    max:    sorted[sorted.length - 1],
+    mean:   +mean.toFixed(4),
+    median: +median.toFixed(4),
+    std:    +Math.sqrt(variance).toFixed(4),
+    sum:    +sum.toFixed(4),
+  };
+}
+
+/**
+ * Comprehensive analysis of a dataset.
+ */
+export function analyzeDataFrame(df) {
+  if (!df || df.length === 0) {
+    return { overview: { row_count: 0, column_count: 0 }, columns: {}, memory_info: {}, detected_types: {} };
+  }
+
+  const columns = Object.keys(df[0]);
+  const rowCount = df.length;
+
+  const columnAnalysis = {};
+  const detectedTypes = {};
+
+  for (const col of columns) {
+    const values = df.map(r => r[col]);
+    const nonNull = values.filter(v => v !== null && v !== undefined && String(v).trim() !== '');
+    const nullCount = rowCount - nonNull.length;
+    const unique = new Set(nonNull.map(v => String(v)));
+    const { type, confidence } = detectSemanticType(nonNull, col);
+
+    detectedTypes[col] = { type, confidence: +confidence.toFixed(3) };
+
+    // Value frequency (top 10)
+    const freq = {};
+    for (const v of nonNull) {
+      const k = String(v);
+      freq[k] = (freq[k] || 0) + 1;
+    }
+    const topValues = Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([value, count]) => ({ value, count, pct: +((count / rowCount) * 100).toFixed(2) }));
+
+    const stats = ['integer', 'float', 'currency'].includes(type) ? numericStats(nonNull) : null;
+
+    columnAnalysis[col] = {
+      total:        rowCount,
+      non_null:     nonNull.length,
+      null_count:   nullCount,
+      null_pct:     +((nullCount / rowCount) * 100).toFixed(2),
+      unique_count: unique.size,
+      uniqueness:   +((unique.size / rowCount) * 100).toFixed(2),
+      is_unique:    unique.size === rowCount,
+      top_values:   topValues,
+      stats,
+      semantic_type: type,
+      type_confidence: +confidence.toFixed(3),
+    };
+  }
+
+  // Rough memory estimate (JSON serialization size)
+  const jsonSize = JSON.stringify(df).length;
+
+  // Duplicate row detection
+  const rowKeys = df.map(r => JSON.stringify(r));
+  const dupSet = new Set();
+  const seen = new Set();
+  for (const k of rowKeys) {
+    if (seen.has(k)) dupSet.add(k);
+    seen.add(k);
+  }
+
+  return {
+    overview: {
+      row_count:       rowCount,
+      column_count:    columns.length,
+      duplicate_rows:  dupSet.size,
+      duplicate_pct:   +((dupSet.size / rowCount) * 100).toFixed(2),
+      total_nulls:     Object.values(columnAnalysis).reduce((s, c) => s + c.null_count, 0),
+      columns,
+    },
+    columns: columnAnalysis,
+    memory_info: {
+      estimated_bytes: jsonSize,
+      estimated_kb:    +(jsonSize / 1024).toFixed(2),
+      estimated_mb:    +(jsonSize / 1024 / 1024).toFixed(4),
+    },
+    detected_types: detectedTypes,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Natural Key Discovery (Apriori-style)
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether a set of columns uniquely identifies every row.
+ */
+function isUnique(df, cols) {
+  const seen = new Set();
+  for (const row of df) {
+    const key = cols.map(c => String(row[c] ?? '')).join('||');
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+}
+
+/**
+ * Generate all combinations of `size` elements from `arr`.
+ */
+function combinations(arr, size) {
+  if (size === 0) return [[]];
+  if (arr.length < size) return [];
+  const [first, ...rest] = arr;
+  const withFirst = combinations(rest, size - 1).map(c => [first, ...c]);
+  const withoutFirst = combinations(rest, size);
+  return [...withFirst, ...withoutFirst];
+}
+
+/**
+ * Find minimal natural key combinations using an Apriori-style breadth-first search.
+ * Stops as soon as it finds the smallest combination size that yields uniqueness.
+ *
+ * selectedColumns: columns to consider (defaults to all columns).
+ * Returns { minimal_combinations, primary_key, alternatives, stats }.
+ */
+export function findNaturalKeys(df, selectedColumns) {
+  if (!df || df.length === 0) return { minimal_combinations: [], primary_key: null, alternatives: [], stats: {} };
+
+  const cols = selectedColumns && selectedColumns.length > 0
+    ? selectedColumns.filter(c => c in (df[0] || {}))
+    : Object.keys(df[0] || {});
+
+  if (cols.length === 0) return { minimal_combinations: [], primary_key: null, alternatives: [], stats: {} };
+
+  const uniqueCols = [];
+  const colStats = {};
+
+  // Pre-filter: single-column uniqueness
+  for (const col of cols) {
+    const vals = df.map(r => String(r[col] ?? ''));
+    const unique = new Set(vals);
+    const uniqueness = unique.size / df.length;
+    colStats[col] = { uniqueness: +uniqueness.toFixed(4), unique_count: unique.size };
+    if (unique.size === df.length) uniqueCols.push(col);
+  }
+
+  if (uniqueCols.length > 0) {
+    return {
+      minimal_combinations: uniqueCols.map(c => [c]),
+      primary_key: [uniqueCols[0]],
+      alternatives: uniqueCols.slice(1).map(c => [c]),
+      stats: colStats,
+    };
+  }
+
+  // Apriori BFS: try combinations of increasing size
+  const maxSize = Math.min(cols.length, 4); // cap at 4 to avoid combinatorial explosion
+  let found = [];
+
+  for (let size = 2; size <= maxSize; size++) {
+    const combos = combinations(cols, size);
+    for (const combo of combos) {
+      if (isUnique(df, combo)) found.push(combo);
+    }
+    if (found.length > 0) break;
+  }
+
+  return {
+    minimal_combinations: found,
+    primary_key: found[0] ?? null,
+    alternatives: found.slice(1),
+    stats: colStats,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// File Parsing Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an XLSX/XLS workbook buffer into an array of row objects.
+ * Returns the first sheet by default.
+ */
+export function parseExcelBuffer(buffer, sheetName) {
+  // Dynamic import handled by caller; this function receives the XLSX module
+  throw new Error('Use parseFileBuffer() instead — it handles both CSV and Excel.');
+}
+
+/**
+ * Parse a CSV string into an array of row objects.
+ */
+export async function parseCSV(csvString) {
+  const { parse } = await import('csv-parse/sync');
+  return parse(csvString, { columns: true, skip_empty_lines: true, trim: true });
+}
+
+/**
+ * Parse a file buffer (Excel or CSV) into an array of row objects.
+ * mimeType: 'text/csv' | 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' | etc.
+ */
+export async function parseFileBuffer(buffer, originalName) {
+  const ext = (originalName || '').split('.').pop().toLowerCase();
+
+  if (ext === 'csv') {
+    const { parse } = await import('csv-parse/sync');
+    return parse(buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true });
+  }
+
+  if (ext === 'xlsx' || ext === 'xls') {
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(sheet, { defval: null });
+  }
+
+  throw new Error(`Unsupported file type: .${ext}. Please upload .csv, .xlsx, or .xls files.`);
+}
+
+// ---------------------------------------------------------------------------
+// Excel Report Generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an Excel workbook (Buffer) with multiple sheets from a report object.
+ * report: { sheetName: [ rowObjects ] }
+ */
+export async function buildExcelReport(report) {
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Scheme-Mapping-Tool';
+  wb.created = new Date();
+
+  for (const [sheetName, rows] of Object.entries(report)) {
+    const ws = wb.addWorksheet(sheetName.slice(0, 31)); // Excel sheet name limit
+    if (!rows || rows.length === 0) {
+      ws.addRow(['No data']);
+      continue;
+    }
+    const headers = Object.keys(rows[0]);
+    ws.addRow(headers);
+    // Style header row
+    ws.getRow(1).eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0066CC' } };
+    });
+    for (const row of rows) {
+      ws.addRow(headers.map(h => row[h] ?? ''));
+    }
+    ws.columns.forEach(col => { col.width = 20; });
+  }
+
+  return wb.xlsx.writeBuffer();
+}
