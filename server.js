@@ -227,11 +227,11 @@ function getHTMLPage() {
 
         const data = await response.json();
         currentERD = data.erd;
-        messageDiv.innerHTML = `<div class="success">${data.message}</div>`;
+        messageDiv.innerHTML = \`<div class="success">\${data.message}</div>\`;
         visualizeERD(data.erd);
         populateEntityList(data.erd);
       } catch (error) {
-        messageDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+        messageDiv.innerHTML = \`<div class="error">Error: \${error.message}</div>\`;
       }
     }
 
@@ -244,7 +244,7 @@ function getHTMLPage() {
         nodes.push({
           id: name,
           label: entity.label || name,
-          title: `Table: ${name}\nFields: ${entity.fields.length}`,
+          title: \`Table: \${name}\nFields: \${entity.fields.length}\`,
           color: { background: '#0066cc', border: '#003d99', highlight: { background: '#0052a3' } },
           font: { color: 'white', size: 14 }
         });
@@ -279,11 +279,11 @@ function getHTMLPage() {
       Object.entries(erd.entities).forEach(([name, entity]) => {
         const div = document.createElement('div');
         div.className = 'entity-item';
-        div.innerHTML = `
-          <h4>${entity.label || name}</h4>
-          <p>${name}</p>
-          <p>${entity.fields.length} fields</p>
-        `;
+        div.innerHTML = \`
+          <h4>\${entity.label || name}</h4>
+          <p>\${name}</p>
+          <p>\${entity.fields.length} fields</p>
+        \`;
         div.onclick = () => network && network.focus(name, { scale: 1.5, animation: true });
         list.appendChild(div);
       });
