@@ -1,10 +1,22 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import comparisonRouter from './routes/comparison.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = dirname(__filename);
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Serve static files from /public
+app.use(express.static(join(__dirname, 'public')));
+
+// Mount comparison / analysis routes
+app.use('/api', comparisonRouter);
 
 // ServiceNow schema cache
 let schemaCache = null;
@@ -137,6 +149,11 @@ app.get('/', (req, res) => {
   res.send(getHTMLPage());
 });
 
+// Serve comparison tool page
+app.get('/comparison', (req, res) => {
+  res.sendFile(join(__dirname, 'public', 'comparison.html'));
+});
+
 function getHTMLPage() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -173,6 +190,7 @@ function getHTMLPage() {
   <div class="container">
     <div class="sidebar">
       <h2>ServiceNow ERD Visualizer</h2>
+      <div style="margin-bottom:12px;padding:8px;background:#f0f7ff;border-radius:4px;"><a href="/comparison" style="color:#0066cc;font-size:13px;font-weight:600;">&#8644; Compare &amp; Analyze Instances &rarr;</a></div>
       <div class="controls">
         <div id="message"></div>
         <div class="form-group">
