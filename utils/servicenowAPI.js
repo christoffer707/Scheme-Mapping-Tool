@@ -22,7 +22,7 @@ function buildClient(instanceUrl, username, password) {
     baseURL: base,
     auth: { username, password },
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    timeout: 30_000,
+    timeout: 120_000,
   });
 }
 
@@ -89,20 +89,32 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   const url = normaliseInstanceUrl(instanceUrl);
   const client = buildClient(url, username, password);
   // Display limit for the filtered (ERD-ready) table set
-  const tableLimit  = opts.tableLimit  ?? 1000;
+  const tableLimit  = opts.tableLimit  ?? Infinity;
   const includeCore = opts.includeCore ?? false;
 
-  // 1. Fetch ALL tables from the instance (hard cap at 2000 to stay safe)
-  let allTablesRaw;
+  // 1. Fetch ALL tables from the instance using pagination (10,000 rows per page)
+  let allTablesRaw = [];
   try {
-    const res = await client.get('/api/now/table/sys_db_object', {
-      params: {
-        sysparm_limit: 2000,
-        sysparm_fields: 'name,label,sys_id,super_class',
-        sysparm_orderby: 'name',
-      },
-    });
-    allTablesRaw = res.data.result || [];
+    const PAGE_SIZE = 10_000;
+    let offset = 0;
+    let keepGoing = true;
+    while (keepGoing) {
+      const res = await client.get('/api/now/table/sys_db_object', {
+        params: {
+          sysparm_limit: PAGE_SIZE,
+          sysparm_offset: offset,
+          sysparm_fields: 'name,label,sys_id,super_class',
+          sysparm_orderby: 'name',
+        },
+      });
+      const page = res.data.result || [];
+      allTablesRaw = allTablesRaw.concat(page);
+      if (page.length < PAGE_SIZE) {
+        keepGoing = false;
+      } else {
+        offset += PAGE_SIZE;
+      }
+    }
   } catch (err) {
     const status = err.response?.status;
     if (status === 401 || status === 403) throw new Error('Authentication failed — check username and password.');

@@ -133,7 +133,7 @@
       border: 1px solid #333;
       border-radius: 8px;
       background: #1a1a2e;
-      height: 500px;
+      height: 600px;
       position: relative;
       overflow: hidden;
     }
@@ -151,6 +151,21 @@
     }
     .erd-placeholder .ph-icon { font-size: 36px; }
     .erd-network { width: 100%; height: 100%; }
+    .erd-large-notice {
+      position: absolute;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(251, 140, 0, 0.92);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 99px;
+      pointer-events: none;
+      z-index: 10;
+      white-space: nowrap;
+    }
 
     /* ── ERD toolbar (above canvas) ───────────────────────────────────── */
     .erd-toolbar {
@@ -460,6 +475,7 @@
             <div class="ph-icon">🗄️</div>
             <div>Connect to load schema</div>
           </div>
+          <div class="erd-large-notice hidden" id="erd-large-notice-inst1">⚡ Large graph — physics disabled</div>
           <div class="erd-network hidden" id="erd-net-inst1"></div>
         </div>
       </div>
@@ -536,6 +552,7 @@
             <div class="ph-icon">🗄️</div>
             <div>Connect to load schema</div>
           </div>
+          <div class="erd-large-notice hidden" id="erd-large-notice-inst2">⚡ Large graph — physics disabled</div>
           <div class="erd-network hidden" id="erd-net-inst2"></div>
         </div>
       </div>
