@@ -89,7 +89,7 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   const url = normaliseInstanceUrl(instanceUrl);
   const client = buildClient(url, username, password);
   // Display limit for the filtered (ERD-ready) table set
-  const tableLimit  = opts.tableLimit  ?? 100;
+  const tableLimit  = opts.tableLimit  ?? 1000;
   const includeCore = opts.includeCore ?? false;
 
   // 1. Fetch ALL tables from the instance (hard cap at 2000 to stay safe)

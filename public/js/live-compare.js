@@ -124,27 +124,40 @@ function validateCredentials(creds, label) {
 // ── ERD Helpers ────────────────────────────────────────────────────────────
 
 /**
- * Classify a table name into 'custom', 'extended', or 'core'.
+ * Classify a table name into 'custom', 'core', or 'standard'.
+ * - custom  : user-created (u_*) or custom-scoped (x_*) tables — green
+ * - core    : built-in ServiceNow tables (sys_*, cmdb_*, well-known names) — purple
+ * - standard: everything else — blue
  * @param {string} tableName
- * @returns {'custom'|'extended'|'core'}
+ * @returns {'custom'|'core'|'standard'}
  */
 function getTableType(tableName) {
-  if (tableName.startsWith('u_')) return 'custom';
-  if (tableName.startsWith('x_')) return 'extended';
-  return 'core';
+  if (tableName.startsWith('u_') || tableName.startsWith('x_')) return 'custom';
+  if (
+    tableName.startsWith('sys_') ||
+    tableName.startsWith('cmdb_') ||
+    tableName.startsWith('sn_') ||
+    tableName.startsWith('sc_') ||
+    tableName.startsWith('wf_') ||
+    tableName.startsWith('kb_') ||
+    ['incident', 'change_request', 'problem', 'request', 'sc_request',
+     'catalog_item', 'sc_cat_item', 'task', 'approval', 'syslog',
+     'sys_user', 'sys_user_group', 'sys_choice', 'sys_script'].includes(tableName)
+  ) return 'core';
+  return 'standard';
 }
 
 /**
- * Return the base fill colour for a table based on its type.
+ * Return vis.js colour config for a table based on its type.
  * Highlight overrides (added/removed/modified) take precedence in renderERD.
  * @param {string} tableName
- * @returns {string} hex colour
+ * @returns {{ bg: string, border: string }}
  */
 function getTableColor(tableName) {
   switch (getTableType(tableName)) {
-    case 'custom':   return '#0066cc'; // blue
-    case 'extended': return '#7c3aed'; // purple
-    default:         return '#888888'; // gray (core)
+    case 'custom':   return { bg: '#1a7a4a', border: '#155f3a' }; // green
+    case 'core':     return { bg: '#7c3aed', border: '#6d28d9' }; // purple
+    default:         return { bg: '#0066cc', border: '#003d99' }; // blue
   }
 }
 
@@ -156,7 +169,7 @@ function getTableColor(tableName) {
  * @param {object} schema        Full schema object (must include raw_tables for full set)
  * @param {string} filterType    'user_custom' | 'all' | 'with_relationships'
  * @param {string} [searchQuery] Optional search string matched against name/label
- * @returns {object[]}           Filtered table array (max 100 entries)
+ * @returns {object[]}           Filtered table array (up to 1000 entries for vis.js)
  */
 function filterTables(schema, filterType, searchQuery) {
   // Start from the full table list so the user can switch filters without re-fetching
@@ -182,8 +195,8 @@ function filterTables(schema, filterType, searchQuery) {
     );
   }
 
-  // Cap at 100 for vis.js performance
-  return filtered.slice(0, 100);
+  // Cap at 1000 — vis.js can handle large graphs with physics disabled above ~500 nodes
+  return filtered.slice(0, 1000);
 }
 
 // ── ERD Rendering ──────────────────────────────────────────────────────────
@@ -214,6 +227,9 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
   // Build a set of visible table names for edge filtering
   const visibleTableNames = new Set(tables.map(t => t.name));
 
+  // For large graphs (>200 nodes) disable physics after stabilisation to keep it responsive
+  const isLargeGraph = tables.length > 200;
+
   tables.forEach(table => {
     // Highlight overrides take precedence over type-based colour
     let bg, border;
@@ -224,11 +240,8 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
     } else if (modifiedSet.has(table.name)) {
       bg = '#d68910'; border = '#b7770d';
     } else {
-      bg = getTableColor(table.name);
-      // Darken the border slightly
-      border = bg === '#0066cc' ? '#003d99'
-             : bg === '#7c3aed' ? '#5b21b6'
-             : '#555555';
+      const c = getTableColor(table.name);
+      bg = c.bg; border = c.border;
     }
 
     const colCount = (schema.columns?.[table.name] || []).length;
@@ -254,8 +267,8 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
       to:     rel.to,
       label:  rel.field,
       arrows: 'to',
-      color:  { color: '#555555', highlight: '#0066cc', hover: '#0066cc' },
-      font:   { size: 9, color: '#888888', strokeWidth: 0 },
+      color:  { color: '#666666', highlight: '#0066cc', hover: '#0066cc' },
+      font:   { size: 9, color: '#aaaaaa', strokeWidth: 0 },
       smooth: { type: 'continuous' },
     });
   });
@@ -263,16 +276,22 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
   const data    = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
   const options = {
     physics: {
-      enabled: true,
+      enabled: !isLargeGraph,
       solver: 'forceAtlas2Based',
       forceAtlas2Based: {
-        gravitationalConstant: -50,
-        centralGravity: 0.01,
-        springLength: 120,
-        springConstant: 0.08,
-        damping: 0.4,
+        gravitationalConstant: -80,
+        centralGravity: 0.005,
+        springLength: 150,
+        springConstant: 0.05,
+        damping: 0.5,
       },
-      stabilization: { iterations: 200, updateInterval: 25 },
+      stabilization: {
+        enabled: true,
+        iterations: isLargeGraph ? 50 : 200,
+        updateInterval: 25,
+        onlyDynamicEdges: false,
+        fit: true,
+      },
     },
     interaction: {
       navigationButtons: true,
@@ -285,15 +304,31 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
       shape: 'box',
       margin: 8,
       borderWidth: 1,
-      shadow: { enabled: true, color: 'rgba(0,0,0,0.4)', size: 6, x: 2, y: 2 },
+      shadow: { enabled: !isLargeGraph, color: 'rgba(0,0,0,0.4)', size: 6, x: 2, y: 2 },
     },
     edges: {
       width: 1,
       selectionWidth: 2,
     },
+    configure: false,
   };
 
-  return new vis.Network(container, data, options);
+  const network = new vis.Network(container, data, options);
+
+  // For large graphs: after stabilisation, disable physics so the graph stops
+  // moving and the browser stays responsive.
+  if (isLargeGraph) {
+    network.once('stabilizationIterationsDone', () => {
+      network.setOptions({ physics: { enabled: false } });
+      network.fit();
+    });
+    // Fallback: disable physics after 3 s regardless
+    setTimeout(() => {
+      network.setOptions({ physics: { enabled: false } });
+    }, 3000);
+  }
+
+  return network;
 }
 
 // ── Table list rendering ───────────────────────────────────────────────────
@@ -398,11 +433,12 @@ async function connectInstance(n) {
     const network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables);
     state[`inst${n}`].network = network;
 
-    // Show table list (uses schema.tables which is the server-filtered set)
+    // Show table list — use raw_tables (full set) so all tables are listed
+    const allTables = schema.raw_tables || schema.tables || [];
     showEl(`table-list-inst${n}-wrap`);
-    $(`table-count-inst${n}`).textContent = schema.tables.length;
-    renderTableList(`table-list-inst${n}`, schema.tables);
-    wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, schema.tables, {});
+    $(`table-count-inst${n}`).textContent = allTables.length;
+    renderTableList(`table-list-inst${n}`, allTables);
+    wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, allTables, {});
 
     // Wire up the ERD filter dropdown and search input
     wireErdFilter(n);
