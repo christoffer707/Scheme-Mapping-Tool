@@ -74,17 +74,20 @@ router.post('/test-connection', async (req, res) => {
 router.post('/fetch-schema', async (req, res) => {
   try {
     requireFields(req.body, ['instance_url', 'username', 'password']);
-    const { instance_url, username, password, table_limit } = req.body;
+    const { instance_url, username, password, table_limit, include_core } = req.body;
 
-    const normUrl = normaliseInstanceUrl(instance_url);
-    const key = cacheKey(normUrl, username);
+    const normUrl    = normaliseInstanceUrl(instance_url);
+    const includeCore = include_core === true || include_core === 'true';
+    // Cache key includes the includeCore flag so toggling it bypasses the cache
+    const key = cacheKey(normUrl, `${username}:${includeCore}`);
     const cached = getCachedSchema(key);
     if (cached) {
       return res.json({ success: true, cached: true, ...cached });
     }
 
     const schema = await fetchServiceNowSchema(normUrl, username, password, {
-      tableLimit: table_limit ? parseInt(table_limit, 10) : 200,
+      tableLimit:  table_limit ? parseInt(table_limit, 10) : 100,
+      includeCore,
     });
 
     setCachedSchema(key, schema);
