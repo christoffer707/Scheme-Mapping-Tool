@@ -8,7 +8,6 @@
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
-  // Default filter set to 'all' to visualize the entire SN instance automatically
   inst1: { schema: null, network: null, connected: false, filterType: 'all', searchQuery: '' },
   inst2: { schema: null, network: null, connected: false, filterType: 'all', searchQuery: '' },
   schemaCompareResult: null,
@@ -106,8 +105,6 @@ async function apiPost(endpoint, body) {
   return data;
 }
 
-// ── Credential readers ─────────────────────────────────────────────────────
-
 function getCredentials(n) {
   return {
     instance_url: $(`inst${n}-url`).value.trim(),
@@ -124,44 +121,29 @@ function validateCredentials(creds, label) {
 
 // ── ERD Helpers ────────────────────────────────────────────────────────────
 
-/**
- * Classify a table name into 'custom', 'core', or 'standard'.
- */
-function getTableType(tableName) {
+function getTableType(tableName, tableObj) {
   if (tableName.startsWith('u_') || tableName.startsWith('x_')) return 'custom';
+  if (tableObj && tableObj.super_class) return 'extended';
   if (
     tableName.startsWith('sys_') ||
     tableName.startsWith('cmdb_') ||
     tableName.startsWith('sn_') ||
-    tableName.startsWith('sc_') ||
-    tableName.startsWith('wf_') ||
-    tableName.startsWith('kb_') ||
-    ['incident', 'change_request', 'problem', 'request', 'sc_request',
-     'catalog_item', 'sc_cat_item', 'task', 'approval', 'syslog',
-     'sys_user', 'sys_user_group', 'sys_choice', 'sys_script'].includes(tableName)
+    ['incident', 'change_request', 'problem', 'request', 'sc_req_item', 'task'].includes(tableName)
   ) return 'core';
   return 'standard';
 }
 
-/**
- * Return vis.js colour config for a table based on its type.
- */
-function getTableColor(tableName) {
-  switch (getTableType(tableName)) {
-    case 'custom':   return { bg: '#1a7a4a', border: '#155f3a' }; // green
-    case 'core':     return { bg: '#7c3aed', border: '#6d28d9' }; // purple
-    default:         return { bg: '#0066cc', border: '#003d99' }; // blue
-  }
+function getTableColor(tableName, tableObj) {
+  const type = getTableType(tableName, tableObj);
+  if (type === 'custom') return { bg: '#1a7a4a', border: '#155f3a' };
+  if (type === 'extended') return { bg: '#e67e22', border: '#b9661a' }; 
+  if (type === 'core') return { bg: '#7c3aed', border: '#6d28d9' };
+  return { bg: '#0066cc', border: '#003d99' };
 }
 
-/**
- * Filter a schema's table list for ERD display.
- * No artificial caps applied here to guarantee complete full-instance visualization.
- */
 function filterTables(schema, filterType, searchQuery) {
   let filtered = schema.raw_tables || schema.tables || [];
 
-  // Apply type filter
   if (filterType === 'user_custom') {
     filtered = filtered.filter(t => t.name.startsWith('u_') || t.name.startsWith('x_'));
   } else if (filterType === 'with_relationships') {
@@ -171,7 +153,6 @@ function filterTables(schema, filterType, searchQuery) {
     filtered = filtered.filter(t => relatedNames.has(t.name));
   }
 
-  // Apply search query
   if (searchQuery && searchQuery.trim()) {
     const q = searchQuery.trim().toLowerCase();
     filtered = filtered.filter(t =>
@@ -180,16 +161,11 @@ function filterTables(schema, filterType, searchQuery) {
     );
   }
 
-  // Cap removed entirely to support visualizing everything
   return filtered;
 }
 
 // ── ERD Rendering ──────────────────────────────────────────────────────────
 
-/**
- * Render a vis.js network graph inside the given container element.
- * Heavily optimized for huge (2000+ nodes) ServiceNow environments.
- */
 function renderERD(containerId, schema, highlights = {}, tableList, noticeId) {
   const container = $(containerId);
   if (!container) return null;
@@ -204,11 +180,10 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId) {
   const tables = tableList || schema.tables || [];
   const visibleTableNames = new Set(tables.map(t => t.name));
 
-  // Scale tiers for performance optimization
   const isLargeGraph = tables.length > 200;
-  const isExtremeGraph = tables.length > 800; // Triggers if visualizing the full SN instance
+  const goldenAngle = 137.508 * (Math.PI / 180);
 
-  tables.forEach(table => {
+  tables.forEach((table, index) => {
     let bg, border;
     if (addedSet.has(table.name)) {
       bg = '#1a7a4a'; border = '#155f3a';
@@ -217,85 +192,78 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId) {
     } else if (modifiedSet.has(table.name)) {
       bg = '#d68910'; border = '#b7770d';
     } else {
-      const c = getTableColor(table.name);
+      const c = getTableColor(table.name, table);
       bg = c.bg; border = c.border;
     }
 
     const colCount = (schema.columns?.[table.name] || []).length;
-    nodes.push({
+    let nodeProps = {
       id:    table.name,
-      label: table.label || table.name,
+      label: table.name,
       title: `Table: ${table.name}\nColumns: ${colCount}`,
       color: {
         background: bg,
         border,
         highlight: { background: bg, border },
-        hover:      { background: bg, border },
+        hover:     { background: bg, border },
       },
-      font:  { color: '#ffffff', size: 13 },
-    });
+      font:  { color: '#ffffff', size: 10 },
+      shape: 'box',
+      margin: 6
+    };
+
+    // Apply Fermat's Spiral math if large
+    if (isLargeGraph) {
+      const r = 30 * Math.sqrt(index);
+      const theta = index * goldenAngle;
+      nodeProps.x = r * Math.cos(theta);
+      nodeProps.y = r * Math.sin(theta);
+    }
+
+    nodes.push(nodeProps);
   });
 
-  // Render edges contextually
-  (schema.relationships || []).forEach(rel => {
-    if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
-    edges.push({
-      from:   rel.from,
-      to:     rel.to,
-      label:  isExtremeGraph ? undefined : rel.field, // Omit edge labels on huge graphs for speed
-      arrows: 'to',
-      color:  { color: '#666666', highlight: '#0066cc', hover: '#0066cc' },
-      font:   { size: 9, color: '#aaaaaa', strokeWidth: 0 },
-      smooth: !isLargeGraph, // Disable smooth curves for major performance gains
+  if (!isLargeGraph) {
+    (schema.relationships || []).forEach(rel => {
+      if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
+      edges.push({
+        from:   rel.from,
+        to:     rel.to,
+        label:  rel.field,
+        arrows: 'to',
+        color:  { color: '#666666', highlight: '#00aaff', hover: '#00aaff' },
+        font:   { size: 9, color: '#aaaaaa', strokeWidth: 0 },
+        smooth: false
+      });
     });
-  });
+  } else {
+    // Faint edges for big graphs
+    (schema.relationships || []).forEach(rel => {
+      if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
+      edges.push({
+        from:   rel.from,
+        to:     rel.to,
+        arrows: 'to',
+        color:  { color: 'rgba(136,136,136,0.3)', highlight: '#00aaff', hover: '#00aaff' },
+        smooth: false
+      });
+    });
+  }
 
   const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
 
   const options = {
-    // If it's an extreme graph, disable physics instantly to stop canvas crashing/freezing
-    physics: isExtremeGraph 
-      ? { enabled: false } 
-      : {
-          enabled: !isLargeGraph,
-          solver: 'forceAtlas2Based',
-          forceAtlas2Based: {
-            gravitationalConstant: -80,
-            centralGravity: 0.005,
-            springLength: 150,
-            springConstant: 0.05,
-            damping: 0.5,
-          },
-          stabilization: {
-            enabled: true,
-            iterations: isLargeGraph ? 50 : 200,
-            updateInterval: 25,
-            onlyDynamicEdges: false,
-            fit: true,
-          },
-        },
-    layout: isExtremeGraph ? { improvedLayout: false, randomSeed: 42 } : {},
+    physics: { enabled: !isLargeGraph },
+    layout: { improvedLayout: false },
     interaction: {
       navigationButtons: true,
       keyboard: false,
       zoomView: true,
-      hover: !isExtremeGraph, // Turn off heavy hover calculations on huge graphs
-      tooltipDelay: 150,
-      hideEdgesOnDrag: isExtremeGraph, // Performance trick: hides lines while panning
-      hideEdgesOnZoom: isExtremeGraph,
+      hideEdgesOnDrag: isLargeGraph,
+      hideEdgesOnZoom: isLargeGraph
     },
-    nodes: {
-      shape: 'box',
-      margin: 8,
-      borderWidth: 1,
-      shadow: { enabled: !isLargeGraph, color: 'rgba(0,0,0,0.4)', size: 6, x: 2, y: 2 },
-    },
-    edges: {
-      width: 1,
-      selectionWidth: 2,
-      smooth: isLargeGraph ? { enabled: false } : { type: 'continuous' },
-    },
-    configure: false,
+    nodes: { borderWidth: 1, shadow: !isLargeGraph },
+    edges: { width: 1, selectionWidth: 2 }
   };
 
   if (noticeId) {
@@ -305,15 +273,13 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId) {
 
   const network = new vis.Network(container, data, options);
 
-  // Fallback engine deceleration check
-  if (isLargeGraph && !isExtremeGraph) {
+  if (!isLargeGraph) {
     network.once('stabilizationIterationsDone', () => {
       network.setOptions({ physics: { enabled: false } });
       network.fit();
     });
-    setTimeout(() => {
-      network.setOptions({ physics: { enabled: false } });
-    }, 3000);
+  } else {
+    network.fit();
   }
 
   return network;
@@ -336,7 +302,6 @@ function renderTableList(listId, tables, highlights = {}) {
     return;
   }
 
-  // Virtualization block or straightforward parsing
   tables.forEach(table => {
     const div = document.createElement('div');
     div.className = 'table-list-item';
@@ -388,7 +353,6 @@ async function connectInstance(n) {
   const tid = startFakeProgress(prefix, 'Fetching schema from ServiceNow…');
 
   try {
-    // MODIFIED: Changed include_core to true to systematically scrape all out-of-the-box tables
     const schema = await apiPost('fetch-schema', {
       instance_url: creds.instance_url,
       username:      creds.username,
@@ -400,7 +364,6 @@ async function connectInstance(n) {
     state[`inst${n}`].schema      = schema;
     state[`inst${n}`].connected   = true;
 
-    // MODIFIED: Changed default initial fallback to 'all' instead of 'user_custom'
     const filterType  = state[`inst${n}`].filterType  || 'all';
     const searchQuery = state[`inst${n}`].searchQuery || '';
 
@@ -410,7 +373,10 @@ async function connectInstance(n) {
     setStatus(`inst${n}`, 'connected', `✓ Connected — ${totalTables} tables`);
 
     const card = $(`card-inst${n}`);
-    if (card) { card.classList.add('connected'); card.classList.remove(n === 2 ? 'inst2' : ''); }
+    if (card) {
+      card.classList.add('connected');
+      if (n === 2) card.classList.remove('inst2'); // Fixed bug here!
+    }
 
     updateErdCounter(n, filteredTables.length, totalTables);
 
@@ -428,9 +394,7 @@ async function connectInstance(n) {
     wireErdFilter(n);
 
     showAlert(`alert-inst${n}`, 'success',
-      `Connected to ${creds.instance_url}. ` +
-      `Showing ${filteredTables.length} of ${totalTables} tables` +
-      `${schema.cached ? ' (cached)' : ''}.`
+      `Connected to ${creds.instance_url}. Showing ${filteredTables.length} of ${totalTables} tables.`
     );
 
     updateActionBar();
@@ -557,22 +521,14 @@ function renderSchemaResults(result) {
   const modifiedSet = new Set((result.modified_tables || []).map(t => t.table));
 
   if (state.inst1.schema && state.inst1.network) {
-    const filtered1 = filterTables(state.inst1.schema,
-      state.inst1.filterType  || 'all',
-      state.inst1.searchQuery || '');
+    const filtered1 = filterTables(state.inst1.schema, state.inst1.filterType || 'all', state.inst1.searchQuery || '');
     state.inst1.network.destroy();
-    state.inst1.network = renderERD('erd-net-inst1', state.inst1.schema,
-      { removed: removedSet, modified: modifiedSet },
-      filtered1, 'erd-large-notice-inst1');
+    state.inst1.network = renderERD('erd-net-inst1', state.inst1.schema, { removed: removedSet, modified: modifiedSet }, filtered1, 'erd-large-notice-inst1');
   }
   if (state.inst2.schema && state.inst2.network) {
-    const filtered2 = filterTables(state.inst2.schema,
-      state.inst2.filterType  || 'all',
-      state.inst2.searchQuery || '');
+    const filtered2 = filterTables(state.inst2.schema, state.inst2.filterType || 'all', state.inst2.searchQuery || '');
     state.inst2.network.destroy();
-    state.inst2.network = renderERD('erd-net-inst2', state.inst2.schema,
-      { added: addedSet, modified: modifiedSet },
-      filtered2, 'erd-large-notice-inst2');
+    state.inst2.network = renderERD('erd-net-inst2', state.inst2.schema, { added: addedSet, modified: modifiedSet }, filtered2, 'erd-large-notice-inst2');
   }
 
   if (state.inst1.schema) {
@@ -584,7 +540,6 @@ function renderSchemaResults(result) {
     renderTableList('table-list-inst2', list2, { added: addedSet, modified: modifiedSet });
   }
 
-  // Added tables list
   $('badge-added-tables').textContent = s.added_count;
   const addedList = $('list-added-tables');
   addedList.innerHTML = '';
@@ -599,7 +554,6 @@ function renderSchemaResults(result) {
     });
   }
 
-  // Removed tables list
   $('badge-removed-tables').textContent = s.removed_count;
   const removedList = $('list-removed-tables');
   removedList.innerHTML = '';
@@ -614,7 +568,6 @@ function renderSchemaResults(result) {
     });
   }
 
-  // Modified tables table
   $('badge-modified-tables').textContent = s.modified_count;
   const modTbody = $('tbl-modified').querySelector('tbody');
   modTbody.innerHTML = '';
@@ -625,15 +578,9 @@ function renderSchemaResults(result) {
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td class="mono">${escHtml(t.table)}<br><span class="text-muted">${escHtml(t.label || '')}</span></td>
-        <td>${t.columns_added.length > 0
-          ? t.columns_added.map(c => `<span class="badge badge-green">${escHtml(c)}</span>`).join(' ')
-          : '<span class="text-muted">—</span>'}</td>
-        <td>${t.columns_removed.length > 0
-          ? t.columns_removed.map(c => `<span class="badge badge-red">${escHtml(c)}</span>`).join(' ')
-          : '<span class="text-muted">—</span>'}</td>
-        <td>${t.type_mismatches.length > 0
-          ? t.type_mismatches.map(m => `<span class="badge badge-amber">${escHtml(m.column)}</span>`).join(' ')
-          : '<span class="text-muted">—</span>'}</td>
+        <td>${t.columns_added.length > 0 ? t.columns_added.map(c => `<span class="badge badge-green">${escHtml(c)}</span>`).join(' ') : '<span class="text-muted">—</span>'}</td>
+        <td>${t.columns_removed.length > 0 ? t.columns_removed.map(c => `<span class="badge badge-red">${escHtml(c)}</span>`).join(' ') : '<span class="text-muted">—</span>'}</td>
+        <td>${t.type_mismatches.length > 0 ? t.type_mismatches.map(m => `<span class="badge badge-amber">${escHtml(m.column)}</span>`).join(' ') : '<span class="text-muted">—</span>'}</td>
         <td><strong>${t.change_count}</strong></td>
       `;
       modTbody.appendChild(tr);
