@@ -8,8 +8,8 @@
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
-  inst1: { schema: null, network: null, connected: false, filterMode: 'custom' },
-  inst2: { schema: null, network: null, connected: false, filterMode: 'custom' },
+  inst1: { schema: null, network: null, connected: false, filterType: 'user_custom', searchQuery: '' },
+  inst2: { schema: null, network: null, connected: false, filterType: 'user_custom', searchQuery: '' },
   schemaCompareResult: null,
   dataCompareResult:   null,
 };
@@ -148,17 +148,56 @@ function getTableColor(tableName) {
   }
 }
 
+// ── Table filtering ────────────────────────────────────────────────────────
+
+/**
+ * Filter a schema's table list for ERD display.
+ *
+ * @param {object} schema        Full schema object (must include raw_tables for full set)
+ * @param {string} filterType    'user_custom' | 'all' | 'with_relationships'
+ * @param {string} [searchQuery] Optional search string matched against name/label
+ * @returns {object[]}           Filtered table array (max 100 entries)
+ */
+function filterTables(schema, filterType, searchQuery) {
+  // Start from the full table list so the user can switch filters without re-fetching
+  let filtered = schema.raw_tables || schema.tables || [];
+
+  // Apply type filter
+  if (filterType === 'user_custom') {
+    filtered = filtered.filter(t => t.name.startsWith('u_') || t.name.startsWith('x_'));
+  } else if (filterType === 'with_relationships') {
+    const relatedNames = new Set(
+      (schema.relationships || []).flatMap(r => [r.from, r.to])
+    );
+    filtered = filtered.filter(t => relatedNames.has(t.name));
+  }
+  // 'all' — no prefix filter
+
+  // Apply search query
+  if (searchQuery && searchQuery.trim()) {
+    const q = searchQuery.trim().toLowerCase();
+    filtered = filtered.filter(t =>
+      t.name.toLowerCase().includes(q) ||
+      (t.label || '').toLowerCase().includes(q)
+    );
+  }
+
+  // Cap at 100 for vis.js performance
+  return filtered.slice(0, 100);
+}
+
 // ── ERD Rendering ──────────────────────────────────────────────────────────
 
 /**
  * Render a vis.js network graph inside the given container element.
- * @param {string} containerId  ID of the .erd-network div
- * @param {object} schema       { tables, columns, relationships }
- * @param {object} [highlights] { added: Set, removed: Set, modified: Set }
- * @param {'custom'|'all'} [filterMode]  'custom' = only u_*/x_* tables; 'all' = everything
+ *
+ * @param {string}   containerId  ID of the .erd-network div
+ * @param {object}   schema       Full schema object { tables, raw_tables, columns, relationships }
+ * @param {object}   [highlights] { added: Set, removed: Set, modified: Set }
+ * @param {object[]} [tableList]  Pre-filtered table list to render; if omitted, uses schema.tables
  * @returns {vis.Network}
  */
-function renderERD(containerId, schema, highlights = {}, filterMode = 'custom') {
+function renderERD(containerId, schema, highlights = {}, tableList) {
   const container = $(containerId);
   if (!container) return null;
 
@@ -169,12 +208,8 @@ function renderERD(containerId, schema, highlights = {}, filterMode = 'custom') 
   const removedSet  = highlights.removed  || new Set();
   const modifiedSet = highlights.modified || new Set();
 
-  // Filter tables based on mode
-  const tables = (schema.tables || []).filter(table => {
-    if (filterMode === 'all') return true;
-    const type = getTableType(table.name);
-    return type === 'custom' || type === 'extended';
-  });
+  // Use the provided pre-filtered list, or fall back to schema.tables
+  const tables = tableList || schema.tables || [];
 
   // Build a set of visible table names for edge filtering
   const visibleTableNames = new Set(tables.map(t => t.name));
@@ -329,44 +364,53 @@ async function connectInstance(n) {
   setStatus(`inst${n}`, 'connecting', '⏳ Connecting…');
   const tid = startFakeProgress(prefix, 'Fetching schema from ServiceNow…');
 
-  // Read the "show all tables" toggle for this instance
-  const includeCore = $(`show-all-inst${n}`)?.checked ?? false;
-  const filterMode  = includeCore ? 'all' : 'custom';
-
   try {
+    // Always fetch all tables from the server; client-side filtering handles display
     const schema = await apiPost('fetch-schema', {
       instance_url: creds.instance_url,
       username:     creds.username,
       password:     creds.password,
-      include_core: includeCore,
+      include_core: false, // fetch u_*/x_* columns; raw_tables has everything
     });
 
     stopFakeProgress(prefix, tid, true);
-    state[`inst${n}`].schema     = schema;
-    state[`inst${n}`].connected  = true;
-    state[`inst${n}`].filterMode = filterMode;
+    state[`inst${n}`].schema      = schema;
+    state[`inst${n}`].connected   = true;
+    // Preserve any filter the user already selected; default to user_custom
+    const filterType  = state[`inst${n}`].filterType  || 'user_custom';
+    const searchQuery = state[`inst${n}`].searchQuery || '';
 
-    setStatus(`inst${n}`, 'connected', `✓ Connected — ${schema.tables.length} tables`);
+    const totalTables    = schema.total_tables    ?? (schema.raw_tables || schema.tables).length;
+    const filteredTables = filterTables(schema, filterType, searchQuery);
+
+    setStatus(`inst${n}`, 'connected', `✓ Connected — ${totalTables} tables`);
 
     // Mark card as connected
     const card = $(`card-inst${n}`);
     if (card) { card.classList.add('connected'); card.classList.remove(n === 2 ? 'inst2' : ''); }
 
-    // Show ERD
+    // Update "Showing X of Y" counter
+    updateErdCounter(n, filteredTables.length, totalTables);
+
+    // Show ERD with filtered table list
     hideEl(`erd-ph-inst${n}`);
     showEl(`erd-net-inst${n}`);
-    const network = renderERD(`erd-net-inst${n}`, schema, {}, filterMode);
+    const network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables);
     state[`inst${n}`].network = network;
 
-    // Show table list
+    // Show table list (uses schema.tables which is the server-filtered set)
     showEl(`table-list-inst${n}-wrap`);
     $(`table-count-inst${n}`).textContent = schema.tables.length;
     renderTableList(`table-list-inst${n}`, schema.tables);
     wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, schema.tables, {});
 
+    // Wire up the ERD filter dropdown and search input
+    wireErdFilter(n);
+
     showAlert(`alert-inst${n}`, 'success',
-      `Connected to ${schema.tables[0] ? creds.instance_url : 'instance'}. ` +
-      `Loaded ${schema.tables.length} tables${schema.cached ? ' (cached)' : ''}.`
+      `Connected to ${creds.instance_url}. ` +
+      `Showing ${filteredTables.length} of ${totalTables} tables` +
+      `${schema.cached ? ' (cached)' : ''}.`
     );
 
     updateActionBar();
@@ -374,6 +418,70 @@ async function connectInstance(n) {
     stopFakeProgress(prefix, tid, false);
     setStatus(`inst${n}`, 'error', '✗ Error');
     showAlert(`alert-inst${n}`, 'error', err.message);
+  }
+}
+
+// ── ERD counter helper ─────────────────────────────────────────────────────
+
+function updateErdCounter(n, filtered, total) {
+  const filteredEl = $(`erd-filtered-inst${n}`);
+  const totalEl    = $(`erd-total-inst${n}`);
+  if (filteredEl) filteredEl.textContent = filtered;
+  if (totalEl)    totalEl.textContent    = total;
+}
+
+// ── ERD filter wiring ──────────────────────────────────────────────────────
+
+/**
+ * Wire up the filter dropdown and search input for an instance's ERD.
+ * Safe to call multiple times — removes old listeners by replacing elements.
+ */
+function wireErdFilter(n) {
+  const filterSel = $(`table-filter-inst${n}`);
+  const searchIn  = $(`erd-search-inst${n}`);
+  if (!filterSel && !searchIn) return;
+
+  const applyFilter = () => {
+    const schema = state[`inst${n}`].schema;
+    if (!schema) return;
+
+    const filterType  = filterSel ? filterSel.value : (state[`inst${n}`].filterType || 'user_custom');
+    const searchQuery = searchIn  ? searchIn.value   : (state[`inst${n}`].searchQuery || '');
+
+    state[`inst${n}`].filterType  = filterType;
+    state[`inst${n}`].searchQuery = searchQuery;
+
+    const totalTables    = schema.total_tables ?? (schema.raw_tables || schema.tables).length;
+    const filteredTables = filterTables(schema, filterType, searchQuery);
+
+    updateErdCounter(n, filteredTables.length, totalTables);
+
+    // Re-render ERD with new filter
+    if (state[`inst${n}`].network) {
+      state[`inst${n}`].network.destroy();
+    }
+    showEl(`erd-net-inst${n}`);
+    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables);
+  };
+
+  // Use a debounced handler for the search input to avoid re-rendering on every keystroke
+  let searchTimer = null;
+  const debouncedApply = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applyFilter, 250);
+  };
+
+  if (filterSel) {
+    // Clone to remove any previously attached listeners
+    const newSel = filterSel.cloneNode(true);
+    filterSel.parentNode.replaceChild(newSel, filterSel);
+    newSel.addEventListener('change', applyFilter);
+  }
+
+  if (searchIn) {
+    const newIn = searchIn.cloneNode(true);
+    searchIn.parentNode.replaceChild(newIn, searchIn);
+    newIn.addEventListener('input', debouncedApply);
   }
 }
 
@@ -394,7 +502,9 @@ async function compareSchemas() {
   const c1 = getCredentials(1);
   const c2 = getCredentials(2);
 
-  const tid = startFakeProgress('inst1', 'Comparing schemas…');
+  const total1 = state.inst1.schema?.total_tables ?? state.inst1.schema?.tables?.length ?? '?';
+  const total2 = state.inst2.schema?.total_tables ?? state.inst2.schema?.tables?.length ?? '?';
+  const tid = startFakeProgress('inst1', `Comparing ${total1} + ${total2} tables…`);
   try {
     const result = await apiPost('compare-schemas', {
       instance1_url:  c1.instance_url,
@@ -434,18 +544,24 @@ function renderSchemaResults(result) {
   const removedSet  = new Set((result.removed_tables || []).map(t => t.name));
   const modifiedSet = new Set((result.modified_tables || []).map(t => t.table));
 
-  // Re-render ERDs with highlights, preserving each instance's filter mode
+  // Re-render ERDs with highlights, preserving each instance's current filter
   if (state.inst1.schema && state.inst1.network) {
+    const filtered1 = filterTables(state.inst1.schema,
+      state.inst1.filterType  || 'user_custom',
+      state.inst1.searchQuery || '');
     state.inst1.network.destroy();
     state.inst1.network = renderERD('erd-net-inst1', state.inst1.schema,
       { removed: removedSet, modified: modifiedSet },
-      state.inst1.filterMode || 'custom');
+      filtered1);
   }
   if (state.inst2.schema && state.inst2.network) {
+    const filtered2 = filterTables(state.inst2.schema,
+      state.inst2.filterType  || 'user_custom',
+      state.inst2.searchQuery || '');
     state.inst2.network.destroy();
     state.inst2.network = renderERD('erd-net-inst2', state.inst2.schema,
       { added: addedSet, modified: modifiedSet },
-      state.inst2.filterMode || 'custom');
+      filtered2);
   }
 
   // Re-render table lists with highlights
@@ -736,57 +852,4 @@ $('btn-run-data-compare').addEventListener('click', runDataCompare);
 
 $('btn-download-report').addEventListener('click', downloadReport);
 
-// ── Show-all-tables toggle handlers ───────────────────────────────────────
-
-/**
- * Re-fetch schema (with or without core tables) and re-render the ERD
- * when the user toggles the "Show all tables" checkbox.
- */
-[1, 2].forEach(n => {
-  $(`show-all-inst${n}`)?.addEventListener('change', async (e) => {
-    const includeCore = e.target.checked;
-    const filterMode  = includeCore ? 'all' : 'custom';
-
-    // If not yet connected, just store the preference — nothing to re-render
-    if (!state[`inst${n}`].connected) {
-      state[`inst${n}`].filterMode = filterMode;
-      return;
-    }
-
-    const creds = getCredentials(n);
-    const prefix = `inst${n}`;
-    const tid = startFakeProgress(prefix, includeCore ? 'Loading all tables…' : 'Loading custom tables…');
-
-    try {
-      const schema = await apiPost('fetch-schema', {
-        instance_url: creds.instance_url,
-        username:     creds.username,
-        password:     creds.password,
-        include_core: includeCore,
-      });
-
-      stopFakeProgress(prefix, tid, true);
-      state[`inst${n}`].schema     = schema;
-      state[`inst${n}`].filterMode = filterMode;
-
-      setStatus(`inst${n}`, 'connected', `✓ Connected — ${schema.tables.length} tables`);
-
-      // Re-render ERD
-      if (state[`inst${n}`].network) {
-        state[`inst${n}`].network.destroy();
-      }
-      showEl(`erd-net-inst${n}`);
-      state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filterMode);
-
-      // Re-render table list
-      $(`table-count-inst${n}`).textContent = schema.tables.length;
-      renderTableList(`table-list-inst${n}`, schema.tables);
-      wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, schema.tables, {});
-    } catch (err) {
-      stopFakeProgress(prefix, tid, false);
-      showAlert(`alert-inst${n}`, 'error', err.message);
-      // Revert checkbox on error
-      e.target.checked = !includeCore;
-    }
-  });
-});
+// ── ERD filter controls are wired in wireErdFilter() called from connectInstance() ──

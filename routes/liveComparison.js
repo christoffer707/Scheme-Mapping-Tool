@@ -69,7 +69,8 @@ router.post('/test-connection', async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/live/fetch-schema
 // Body: { instance_url, username, password, table_limit? }
-// Returns: { tables, columns, relationships, fetched_at }
+// Returns: { tables, raw_tables, columns, relationships,
+//            total_tables, filtered_tables, filter_applied, fetched_at }
 // ---------------------------------------------------------------------------
 router.post('/fetch-schema', async (req, res) => {
   try {
@@ -91,7 +92,15 @@ router.post('/fetch-schema', async (req, res) => {
     });
 
     setCachedSchema(key, schema);
-    res.json({ success: true, cached: false, ...schema });
+    res.json({
+      success: true,
+      cached: false,
+      ...schema,
+      // Explicitly surface the count metadata so clients don't have to derive it
+      total_tables:    schema.total_tables,
+      filtered_tables: schema.filtered_tables,
+      filter_applied:  schema.filter_applied,
+    });
   } catch (err) {
     const status = err.message.includes('Authentication') ? 401 : 500;
     res.status(status).json({ success: false, error: err.message });
@@ -139,19 +148,27 @@ router.post('/compare-schemas', async (req, res) => {
       })(),
     ]);
 
-    // Build table-level comparison
-    const tables1 = new Map(schema1.tables.map(t => [t.name, t]));
-    const tables2 = new Map(schema2.tables.map(t => [t.name, t]));
+    // Build table-level comparison using ALL tables (raw_tables) so the diff
+    // covers the full instance schema, not just the filtered display set.
+    const allTables1 = schema1.raw_tables || schema1.tables;
+    const allTables2 = schema2.raw_tables || schema2.tables;
 
-    const added   = schema2.tables.filter(t => !tables1.has(t.name));
-    const removed = schema1.tables.filter(t => !tables2.has(t.name));
-    const common  = schema1.tables.filter(t => tables2.has(t.name));
+    const allMap1 = new Map(allTables1.map(t => [t.name, t]));
+    const allMap2 = new Map(allTables2.map(t => [t.name, t]));
 
-    // Column-level diff for common tables
+    const added   = allTables2.filter(t => !allMap1.has(t.name));
+    const removed = allTables1.filter(t => !allMap2.has(t.name));
+    const common  = allTables1.filter(t => allMap2.has(t.name));
+
+    // Column-level diff for common tables (columns are only fetched for the
+    // filtered display set, so this diff is scoped to those tables)
     const modified = [];
     for (const table of common) {
       const cols1 = new Map((schema1.columns[table.name] || []).map(c => [c.name, c]));
       const cols2 = new Map((schema2.columns[table.name] || []).map(c => [c.name, c]));
+
+      // Skip tables where neither instance has column data (outside filtered set)
+      if (cols1.size === 0 && cols2.size === 0) continue;
 
       const colsAdded   = [...cols2.keys()].filter(c => !cols1.has(c));
       const colsRemoved = [...cols1.keys()].filter(c => !cols2.has(c));
@@ -185,8 +202,8 @@ router.post('/compare-schemas', async (req, res) => {
       common_tables:  common,
       modified_tables: modified,
       summary: {
-        total_inst1:    schema1.tables.length,
-        total_inst2:    schema2.tables.length,
+        total_inst1:    allTables1.length,
+        total_inst2:    allTables2.length,
         added_count:    added.length,
         removed_count:  removed.length,
         common_count:   common.length,

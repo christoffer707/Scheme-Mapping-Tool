@@ -432,6 +432,19 @@
 
       <!-- ERD Visualizer -->
       <div class="mt-12">
+        <!-- Filter bar -->
+        <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <span style="font-size:12px;color:#666;white-space:nowrap;">
+            Showing <strong id="erd-filtered-inst1">0</strong> of <strong id="erd-total-inst1">0</strong> tables
+          </span>
+          <select id="table-filter-inst1" style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;">
+            <option value="user_custom">User/Custom Tables (u_*, x_*)</option>
+            <option value="all">All Tables</option>
+            <option value="with_relationships">Tables with Relationships</option>
+          </select>
+          <input type="text" id="erd-search-inst1" placeholder="Search tables…"
+            style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;flex:1;max-width:200px;" />
+        </div>
         <div class="erd-toolbar">
           <div class="erd-toolbar-left">
             <div class="erd-title">ERD Visualizer</div>
@@ -440,12 +453,6 @@
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Extended (x_*)</div>
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#888888;"></div>Core</div>
             </div>
-          </div>
-          <div class="erd-toolbar-right">
-            <label class="erd-toggle-label">
-              <input type="checkbox" id="show-all-inst1" />
-              Show all tables
-            </label>
           </div>
         </div>
         <div class="erd-container" id="erd-inst1">
@@ -501,6 +508,19 @@
 
       <!-- ERD Visualizer -->
       <div class="mt-12">
+        <!-- Filter bar -->
+        <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <span style="font-size:12px;color:#666;white-space:nowrap;">
+            Showing <strong id="erd-filtered-inst2">0</strong> of <strong id="erd-total-inst2">0</strong> tables
+          </span>
+          <select id="table-filter-inst2" style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;">
+            <option value="user_custom">User/Custom Tables (u_*, x_*)</option>
+            <option value="all">All Tables</option>
+            <option value="with_relationships">Tables with Relationships</option>
+          </select>
+          <input type="text" id="erd-search-inst2" placeholder="Search tables…"
+            style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;flex:1;max-width:200px;" />
+        </div>
         <div class="erd-toolbar">
           <div class="erd-toolbar-left">
             <div class="erd-title">ERD Visualizer</div>
@@ -509,12 +529,6 @@
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Extended (x_*)</div>
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#888888;"></div>Core</div>
             </div>
-          </div>
-          <div class="erd-toolbar-right">
-            <label class="erd-toggle-label">
-              <input type="checkbox" id="show-all-inst2" />
-              Show all tables
-            </label>
           </div>
         </div>
         <div class="erd-container" id="erd-inst2">
