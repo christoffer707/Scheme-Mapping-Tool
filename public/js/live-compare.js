@@ -169,7 +169,7 @@ function getTableColor(tableName) {
  * @param {object} schema        Full schema object (must include raw_tables for full set)
  * @param {string} filterType    'user_custom' | 'all' | 'with_relationships'
  * @param {string} [searchQuery] Optional search string matched against name/label
- * @returns {object[]}           Filtered table array (up to 1000 entries for vis.js)
+ * @returns {object[]}           Filtered table array
  */
 function filterTables(schema, filterType, searchQuery) {
   // Start from the full table list so the user can switch filters without re-fetching
@@ -195,8 +195,7 @@ function filterTables(schema, filterType, searchQuery) {
     );
   }
 
-  // Cap at 1000 — vis.js can handle large graphs with physics disabled above ~500 nodes
-  return filtered.slice(0, 1000);
+  return filtered;
 }
 
 // ── ERD Rendering ──────────────────────────────────────────────────────────
@@ -227,10 +226,31 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
   // Build a set of visible table names for edge filtering
   const visibleTableNames = new Set(tables.map(t => t.name));
 
-  // For large graphs (>200 nodes) disable physics after stabilisation to keep it responsive
+  // For large graphs (>200 nodes) disable physics entirely and use a
+  // deterministic random layout to keep the browser responsive.
   const isLargeGraph = tables.length > 200;
 
-  tables.forEach(table => {
+  // Show / hide the large-graph notice banner (element may not exist for all containers)
+  const noticeId = containerId.replace('erd-net-', 'erd-large-notice-');
+  const noticeEl = $(noticeId);
+  if (noticeEl) {
+    if (isLargeGraph) {
+      noticeEl.classList.remove('hidden');
+    } else {
+      noticeEl.classList.add('hidden');
+    }
+  }
+
+  // Deterministic pseudo-random layout seed for large graphs so the positions
+  // are stable across re-renders without running the physics engine.
+  let seed = 42;
+  function seededRand() {
+    seed = (seed * 1664525 + 1013904223) & 0xffffffff;
+    return (seed >>> 0) / 0xffffffff;
+  }
+  const SPREAD = 3000;
+
+  tables.forEach((table, idx) => {
     // Highlight overrides take precedence over type-based colour
     let bg, border;
     if (addedSet.has(table.name)) {
@@ -245,7 +265,7 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
     }
 
     const colCount = (schema.columns?.[table.name] || []).length;
-    nodes.push({
+    const node = {
       id:    table.name,
       label: table.label || table.name,
       title: `Table: ${table.name}\nColumns: ${colCount}`,
@@ -256,7 +276,13 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
         hover:      { background: bg, border },
       },
       font:  { color: '#ffffff', size: 13 },
-    });
+    };
+    // Assign deterministic positions for large graphs so vis.js skips layout
+    if (isLargeGraph) {
+      node.x = (seededRand() - 0.5) * SPREAD;
+      node.y = (seededRand() - 0.5) * SPREAD;
+    }
+    nodes.push(node);
   });
 
   // Only draw edges where both endpoints are visible
@@ -269,7 +295,7 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
       arrows: 'to',
       color:  { color: '#666666', highlight: '#0066cc', hover: '#0066cc' },
       font:   { size: 9, color: '#aaaaaa', strokeWidth: 0 },
-      smooth: { type: 'continuous' },
+      smooth: isLargeGraph ? false : { type: 'continuous' },
     });
   });
 
@@ -286,8 +312,8 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
         damping: 0.5,
       },
       stabilization: {
-        enabled: true,
-        iterations: isLargeGraph ? 50 : 200,
+        enabled: !isLargeGraph,
+        iterations: 200,
         updateInterval: 25,
         onlyDynamicEdges: false,
         fit: true,
@@ -304,7 +330,7 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
       shape: 'box',
       margin: 8,
       borderWidth: 1,
-      shadow: { enabled: !isLargeGraph, color: 'rgba(0,0,0,0.4)', size: 6, x: 2, y: 2 },
+      shadow: isLargeGraph ? false : { enabled: true, color: 'rgba(0,0,0,0.4)', size: 6, x: 2, y: 2 },
     },
     edges: {
       width: 1,
@@ -315,17 +341,9 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
 
   const network = new vis.Network(container, data, options);
 
-  // For large graphs: after stabilisation, disable physics so the graph stops
-  // moving and the browser stays responsive.
+  // For large graphs physics is already off; just fit the viewport once rendered.
   if (isLargeGraph) {
-    network.once('stabilizationIterationsDone', () => {
-      network.setOptions({ physics: { enabled: false } });
-      network.fit();
-    });
-    // Fallback: disable physics after 3 s regardless
-    setTimeout(() => {
-      network.setOptions({ physics: { enabled: false } });
-    }, 3000);
+    network.once('afterDrawing', () => { network.fit(); });
   }
 
   return network;
@@ -600,13 +618,15 @@ function renderSchemaResults(result) {
       filtered2);
   }
 
-  // Re-render table lists with highlights
+  // Re-render table lists with highlights — use raw_tables (full set)
   if (state.inst1.schema) {
-    renderTableList('table-list-inst1', state.inst1.schema.tables,
+    const allTables1 = state.inst1.schema.raw_tables || state.inst1.schema.tables || [];
+    renderTableList('table-list-inst1', allTables1,
       { removed: removedSet, modified: modifiedSet });
   }
   if (state.inst2.schema) {
-    renderTableList('table-list-inst2', state.inst2.schema.tables,
+    const allTables2 = state.inst2.schema.raw_tables || state.inst2.schema.tables || [];
+    renderTableList('table-list-inst2', allTables2,
       { added: addedSet, modified: modifiedSet });
   }
 

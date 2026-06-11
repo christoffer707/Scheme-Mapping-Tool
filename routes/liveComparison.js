@@ -87,7 +87,7 @@ router.post('/fetch-schema', async (req, res) => {
     }
 
     const schema = await fetchServiceNowSchema(normUrl, username, password, {
-      tableLimit:  table_limit ? parseInt(table_limit, 10) : 100,
+      tableLimit:  table_limit ? parseInt(table_limit, 10) : undefined,
       includeCore,
     });
 
