@@ -84,6 +84,10 @@ function getHTMLPage() {
     #network { flex: 1; height: 100%; }
     .canvas-overlay { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.75); padding: 12px 18px; border-radius: 8px; font-size: 13px; z-index: 5; pointer-events: none; line-height: 1.5; border: 1px solid rgba(255,255,255,0.1); }
     
+    /* Back Button */
+    #btn-back-macro { display: none; position: absolute; top: 20px; right: 480px; z-index: 100; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; background: #1a7a4a; color: white; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.4); transition: background 0.2s; }
+    #btn-back-macro:hover { background: #155f3a; }
+
     /* Detail Panel */
     .detail-panel { width: 450px; background: white; border-left: 1px solid #ddd; display: flex; flex-direction: column; transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: absolute; right: 0; top: 0; bottom: 0; z-index: 20; box-shadow: -4px 0 25px rgba(0,0,0,0.2); }
     .detail-panel.open { transform: translateX(0); }
@@ -101,6 +105,8 @@ function getHTMLPage() {
     .badge-active { background: #d4edda; color: #155724; }
     .badge-inactive { background: #f8d7da; color: #721c24; }
     .badge-type { background: #e2e3e5; color: #383d41; }
+    .field-row { padding:8px 0; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; }
+    .field-row:last-child { border-bottom: none; }
 
     /* Forms & Utilities */
     .form-group { margin-bottom: 12px; }
@@ -108,8 +114,6 @@ function getHTMLPage() {
     input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
     button { background: #0066cc; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; width: 100%; margin-bottom: 8px; }
     button:hover { background: #0052a3; }
-    button.btn-secondary { background: #444; }
-    button.btn-secondary:hover { background: #222; }
     
     .entity-item { padding: 10px; background: #fff; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; cursor: pointer; border-left: 4px solid #0066cc; }
     .entity-item:hover { background: #f0f7ff; }
@@ -144,7 +148,6 @@ function getHTMLPage() {
 
       <div class="table-search-container" id="search-container" style="display:none;">
         <input type="text" id="tableSearch" placeholder="Search tables (e.g., incident)..." onkeyup="filterTables()">
-        <button class="btn-secondary" style="margin-top: 10px; font-size: 11px; padding: 6px;" onclick="renderMacroGraph(false)">Show All Relationships (Macro View)</button>
         <div style="font-size: 11px; color: #888; margin-top: 6px;" id="table-count-label"></div>
       </div>
 
@@ -153,6 +156,7 @@ function getHTMLPage() {
 
     <div class="main">
       <div class="canvas-overlay" id="canvas-status">Waiting for connection...</div>
+      <button id="btn-back-macro" onclick="resetToMacroView()">&#8592; Back to Full Instance View</button>
       <div id="network"></div>
       
       <div class="detail-panel" id="detailPanel">
@@ -166,10 +170,30 @@ function getHTMLPage() {
         <div class="detail-body" id="dp-body">
           <div class="empty-state" id="dp-loading">Fetching table artifacts from ServiceNow...</div>
           <div id="dp-content" style="display:none;">
-            <div class="artifact-section"><h4><span>Database Columns</span> <span class="badge badge-type" id="dp-fields-count">0</span></h4></div>
-            <div class="artifact-section"><h4><span>Business Rules</span> <span class="badge badge-type" id="dp-br-count">0</span></h4><div id="dp-brs"></div></div>
-            <div class="artifact-section"><h4><span>Client Scripts</span> <span class="badge badge-type" id="dp-cs-count">0</span></h4><div id="dp-scripts"></div></div>
-            <div class="artifact-section"><h4><span>UI Policies</span> <span class="badge badge-type" id="dp-ui-count">0</span></h4><div id="dp-policies"></div></div>
+            <div class="artifact-section">
+              <h4><span>Database Columns</span> <span class="badge badge-type" id="dp-fields-count">0</span></h4>
+              <div id="dp-fields-list"></div>
+            </div>
+            <div class="artifact-section">
+              <h4><span>Workflows</span> <span class="badge badge-type" id="dp-wf-count">0</span></h4>
+              <div id="dp-workflows"></div>
+            </div>
+            <div class="artifact-section">
+              <h4><span>Script Includes</span> <span class="badge badge-type" id="dp-si-count">0</span></h4>
+              <div id="dp-script-includes"></div>
+            </div>
+            <div class="artifact-section">
+              <h4><span>Business Rules</span> <span class="badge badge-type" id="dp-br-count">0</span></h4>
+              <div id="dp-brs"></div>
+            </div>
+            <div class="artifact-section">
+              <h4><span>Client Scripts</span> <span class="badge badge-type" id="dp-cs-count">0</span></h4>
+              <div id="dp-scripts"></div>
+            </div>
+            <div class="artifact-section">
+              <h4><span>UI Policies</span> <span class="badge badge-type" id="dp-ui-count">0</span></h4>
+              <div id="dp-policies"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -213,29 +237,7 @@ function getHTMLPage() {
         document.getElementById('table-count-label').innerText = \`\${Object.keys(currentERD.entities).length} tables loaded\`;
         
         populateEntityList(currentERD);
-        
-        // Calculate Stats
-        let customCount = 0, coreCount = 0, stdCount = 0;
-        Object.keys(currentERD.entities).forEach(name => {
-           const type = getTableType(name);
-           if(type === 'custom') customCount++;
-           else if(type === 'core') coreCount++;
-           else stdCount++;
-        });
-
-        const initialStatusHTML = \`
-          <strong style="font-size:15px;color:#4da6ff;">Schema Successfully Loaded!</strong><br>
-          <div style="margin-top:6px;margin-bottom:6px;display:flex;gap:12px;">
-            <span><span style="color:#2ecc71;">■</span> Custom: \${customCount}</span>
-            <span><span style="color:#b366ff;">■</span> Core: \${coreCount}</span>
-            <span><span style="color:#3399ff;">■</span> Platform: \${stdCount}</span>
-          </div>
-          <span style="color:#aaa;">Search & click a table in the sidebar to map its relationships.</span>
-        \`;
-
-        // Render Macro view by default, HIDE EDGES so it doesn't hairball
-        renderMacroGraph(true, initialStatusHTML);
-
+        resetToMacroView(); // Draws the initial galaxy without relationships
       } catch (error) {
         messageDiv.innerHTML = \`<div class="alert error">\${error.message}</div>\`;
         document.getElementById('canvas-status').innerText = 'Error loading schema.';
@@ -280,11 +282,60 @@ function getHTMLPage() {
       });
     }
 
-    // Contextual Graphing (1st-degree table relations only)
+    function resetToMacroView() {
+      closeDetailPanel();
+      document.getElementById('btn-back-macro').style.display = 'none';
+
+      let customCount = 0, coreCount = 0, stdCount = 0;
+      Object.keys(currentERD.entities).forEach(name => {
+         const type = getTableType(name);
+         if(type === 'custom') customCount++;
+         else if(type === 'core') coreCount++;
+         else stdCount++;
+      });
+
+      const initialStatusHTML = \`
+        <strong style="font-size:15px;color:#4da6ff;">Schema Successfully Loaded!</strong><br>
+        <div style="margin-top:6px;margin-bottom:6px;display:flex;gap:12px;">
+          <span><span style="color:#2ecc71;">■</span> Custom: \${customCount}</span>
+          <span><span style="color:#b366ff;">■</span> Core: \${coreCount}</span>
+          <span><span style="color:#3399ff;">■</span> Platform: \${stdCount}</span>
+        </div>
+        <span style="color:#aaa;">Search & click a table in the sidebar to map its relationships.</span>
+      \`;
+
+      document.getElementById('canvas-status').innerHTML = initialStatusHTML;
+
+      const nodes = new vis.DataSet();
+      const tableNames = Object.keys(currentERD.entities);
+      const goldenAngle = 137.508 * (Math.PI / 180);
+      
+      tableNames.forEach((name, index) => {
+        const c = getTableColor(name);
+        const r = 30 * Math.sqrt(index);
+        const theta = index * goldenAngle;
+
+        nodes.add({
+          id: name, label: name, x: r * Math.cos(theta), y: r * Math.sin(theta),
+          color: { background: c.bg, border: c.border }, font: { color: 'white', size: 10 },
+          shape: 'box', margin: 6
+        });
+      });
+
+      if (network) network.destroy();
+      network = new vis.Network(document.getElementById('network'), { nodes, edges: new vis.DataSet() }, {
+        physics: { enabled: false }, 
+        interaction: { hideEdgesOnDrag: true, hideEdgesOnZoom: true, dragNodes: false }
+      });
+      network.fit();
+    }
+
+    // Contextual Graphing - Highlights lines intensely
     function selectAndRenderTable(targetTableName, clickedElement) {
       document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
       if (clickedElement) clickedElement.classList.add('active');
 
+      document.getElementById('btn-back-macro').style.display = 'block';
       document.getElementById('canvas-status').innerHTML = \`Calculating Layout for: <strong style="color:#4da6ff;">\${targetTableName}</strong>...<br><span style="color:#aaa;">(Please wait...)</span>\`;
       fetchTableArtifacts(targetTableName);
 
@@ -315,10 +366,9 @@ function getHTMLPage() {
           addNode(rel.from === targetTableName ? rel.to : rel.from);
           edges.add({
             from: rel.from, to: rel.to, label: rel.field, arrows: 'to',
-            color: { color: '#888', highlight: '#00aaff' }, 
-            // Gives the text a clean white box so they are readable over the lines and canvas
+            // Made lines thick, bright blue, and pronounced
+            color: { color: '#00aaff', highlight: '#ff9900' }, width: 2,
             font: { size: 11, color: '#111', background: '#ffffff', strokeWidth: 0, align: 'middle' },
-            // Fanning them out so they don't perfectly stack
             smooth: { type: 'curvedCW', roundness: 0.15 } 
           });
           edgeCount++;
@@ -330,9 +380,8 @@ function getHTMLPage() {
       const container = document.getElementById('network');
       const options = {
         physics: {
-          enabled: true,
-          solver: 'forceAtlas2Based',
-          forceAtlas2Based: { gravitationalConstant: -100, centralGravity: 0.01, springConstant: 0.08, springLength: 150 },
+          enabled: true, solver: 'forceAtlas2Based',
+          forceAtlas2Based: { gravitationalConstant: -100, centralGravity: 0.01, springConstant: 0.08, springLength: 200 },
           stabilization: { enabled: true, iterations: 150, updateInterval: 50 }
         },
         interaction: { hover: true, dragNodes: true, hideEdgesOnDrag: true }
@@ -345,58 +394,6 @@ function getHTMLPage() {
         document.getElementById('canvas-status').innerHTML = \`Viewing dependencies for: <strong style="color:#4da6ff;">\${targetTableName}</strong><br><span style="color:#aaa;">(\${edgeCount} relationships mapped)</span>\`;
         network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
       });
-    }
-
-    // Macro Graph (Uses Fermat's Spiral for perfect, instant node distribution)
-    function renderMacroGraph(hideEdges = false, customStatusHTML = null) {
-      if (customStatusHTML) {
-        document.getElementById('canvas-status').innerHTML = customStatusHTML;
-      } else {
-        document.getElementById('canvas-status').innerText = hideEdges 
-          ? 'Rendering instance overview (Lines hidden for performance)...' 
-          : 'Rendering entire instance schema... WARNING: Rendering 10k+ relationship lines will cause severe lag.';
-      }
-
-      const nodes = new vis.DataSet();
-      const edges = new vis.DataSet();
-      
-      const tableNames = Object.keys(currentERD.entities);
-      const goldenAngle = 137.508 * (Math.PI / 180);
-      
-      tableNames.forEach((name, index) => {
-        const c = getTableColor(name);
-        // Fermat's Spiral layout guarantees perfect, instant spacing with zero overlapping
-        const r = 30 * Math.sqrt(index);
-        const theta = index * goldenAngle;
-
-        nodes.add({
-          id: name, label: name,
-          x: r * Math.cos(theta),
-          y: r * Math.sin(theta),
-          color: { background: c.bg, border: c.border }, font: { color: 'white', size: 10 },
-          shape: 'box', margin: 6
-        });
-      });
-
-      if (!hideEdges) {
-        currentERD.relationships.forEach(rel => {
-          if (currentERD.entities[rel.from] && currentERD.entities[rel.to]) {
-            edges.add({ 
-              from: rel.from, to: rel.to, arrows: 'to', 
-              color: { color: 'rgba(136,136,136,0.3)' }, // Make lines faint so nodes stand out
-              smooth: false 
-            });
-          }
-        });
-      }
-
-      if (network) network.destroy();
-      network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
-        physics: { enabled: false }, // Zero physics calculation needed because of the spiral coordinates
-        interaction: { hideEdgesOnDrag: true, hideEdgesOnZoom: true, dragNodes: false }
-      });
-      
-      network.fit();
     }
 
     async function fetchTableArtifacts(tableName) {
@@ -424,13 +421,53 @@ function getHTMLPage() {
       document.getElementById('dp-loading').style.display = 'none';
       document.getElementById('dp-content').style.display = 'block';
 
+      // 1. Database Columns (Field Drill-Down)
       const entity = currentERD.entities[tableName];
-      document.getElementById('dp-fields-count').innerText = entity ? entity.fields.length : 0;
+      const fields = entity ? entity.fields : [];
+      document.getElementById('dp-fields-count').innerText = fields.length;
+      
+      const fieldsHtml = fields.map(f => \`
+        <div class="field-row">
+          <div>
+            <div style="font-family:monospace; font-weight:bold; font-size:12px; color:#0066cc;">\${f.name}</div>
+            <div style="font-size:11px; color:#888;">\${f.label || ''}</div>
+          </div>
+          <div style="text-align:right;">
+            <span class="badge badge-type">\${f.type}</span>
+            \${f.reference ? \`<br><span style="font-size:10px; color:#1a7a4a; display:inline-block; margin-top:3px;">&#8594; \${f.reference}</span>\` : ''}
+          </div>
+        </div>
+      \`).join('');
+      document.getElementById('dp-fields-list').innerHTML = \`<div style="max-height:300px; overflow-y:auto; padding-right:8px; margin-top:8px; border:1px solid #eee; border-radius:6px; padding-left:8px;">\${fieldsHtml || '<div class="empty-state" style="padding:10px;">No fields found</div>'}</div>\`;
 
       const buildHtml = (items, renderer) => items.length === 0 
         ? '<div class="empty-state" style="padding:10px;">None found</div>' 
         : items.map(renderer).join('');
 
+      // 2. Workflows
+      document.getElementById('dp-wf-count').innerText = art.workflows.length;
+      document.getElementById('dp-workflows').innerHTML = buildHtml(art.workflows, wf => \`
+        <div class="artifact-item" style="border-left-color: #d68910;">
+          <div class="artifact-title">\${wf.name}</div>
+          <div class="artifact-meta">
+            <span class="badge \${wf.active === 'true' ? 'badge-active' : 'badge-inactive'}">\${wf.active === 'true' ? 'Active' : 'Inactive'}</span>
+          </div>
+        </div>
+      \`);
+
+      // 3. Script Includes
+      document.getElementById('dp-si-count').innerText = art.scriptIncludes.length;
+      document.getElementById('dp-script-includes').innerHTML = buildHtml(art.scriptIncludes, si => \`
+        <div class="artifact-item" style="border-left-color: #e74c3c;">
+          <div class="artifact-title">\${si.name}</div>
+          <div class="artifact-meta">
+            <span class="badge \${si.active === 'true' ? 'badge-active' : 'badge-inactive'}">\${si.active === 'true' ? 'Active' : 'Inactive'}</span>
+            \${si.api_name ? \`<span style="color:#888;">API: \${si.api_name}</span>\` : ''}
+          </div>
+        </div>
+      \`);
+
+      // 4. Business Rules
       document.getElementById('dp-br-count').innerText = art.businessRules.length;
       document.getElementById('dp-brs').innerHTML = buildHtml(art.businessRules, br => \`
         <div class="artifact-item">
@@ -445,6 +482,7 @@ function getHTMLPage() {
         </div>
       \`);
 
+      // 5. Client Scripts
       document.getElementById('dp-cs-count').innerText = art.clientScripts.length;
       document.getElementById('dp-scripts').innerHTML = buildHtml(art.clientScripts, cs => \`
         <div class="artifact-item" style="border-left-color: #1a7a4a;">
@@ -456,6 +494,7 @@ function getHTMLPage() {
         </div>
       \`);
 
+      // 6. UI Policies
       document.getElementById('dp-ui-count').innerText = art.uiPolicies.length;
       document.getElementById('dp-policies').innerHTML = buildHtml(art.uiPolicies, ui => \`
         <div class="artifact-item" style="border-left-color: #0066cc;">
