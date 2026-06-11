@@ -8,8 +8,9 @@
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
-  inst1: { schema: null, network: null, connected: false, filterType: 'user_custom', searchQuery: '' },
-  inst2: { schema: null, network: null, connected: false, filterType: 'user_custom', searchQuery: '' },
+  // Default filter set to 'all' to visualize the entire SN instance automatically
+  inst1: { schema: null, network: null, connected: false, filterType: 'all', searchQuery: '' },
+  inst2: { schema: null, network: null, connected: false, filterType: 'all', searchQuery: '' },
   schemaCompareResult: null,
   dataCompareResult:   null,
 };
@@ -110,8 +111,8 @@ async function apiPost(endpoint, body) {
 function getCredentials(n) {
   return {
     instance_url: $(`inst${n}-url`).value.trim(),
-    username:     $(`inst${n}-user`).value.trim(),
-    password:     $(`inst${n}-pass`).value,
+    username:      $(`inst${n}-user`).value.trim(),
+    password:      $(`inst${n}-pass`).value,
   };
 }
 
@@ -125,11 +126,6 @@ function validateCredentials(creds, label) {
 
 /**
  * Classify a table name into 'custom', 'core', or 'standard'.
- * - custom  : user-created (u_*) or custom-scoped (x_*) tables — green
- * - core    : built-in ServiceNow tables (sys_*, cmdb_*, well-known names) — purple
- * - standard: everything else — blue
- * @param {string} tableName
- * @returns {'custom'|'core'|'standard'}
  */
 function getTableType(tableName) {
   if (tableName.startsWith('u_') || tableName.startsWith('x_')) return 'custom';
@@ -149,9 +145,6 @@ function getTableType(tableName) {
 
 /**
  * Return vis.js colour config for a table based on its type.
- * Highlight overrides (added/removed/modified) take precedence in renderERD.
- * @param {string} tableName
- * @returns {{ bg: string, border: string }}
  */
 function getTableColor(tableName) {
   switch (getTableType(tableName)) {
@@ -161,18 +154,11 @@ function getTableColor(tableName) {
   }
 }
 
-// ── Table filtering ────────────────────────────────────────────────────────
-
 /**
  * Filter a schema's table list for ERD display.
- *
- * @param {object} schema        Full schema object (must include raw_tables for full set)
- * @param {string} filterType    'user_custom' | 'all' | 'with_relationships'
- * @param {string} [searchQuery] Optional search string matched against name/label
- * @returns {object[]}           Filtered table array (up to 1000 entries for vis.js)
+ * No artificial caps applied here to guarantee complete full-instance visualization.
  */
 function filterTables(schema, filterType, searchQuery) {
-  // Start from the full table list so the user can switch filters without re-fetching
   let filtered = schema.raw_tables || schema.tables || [];
 
   // Apply type filter
@@ -184,7 +170,6 @@ function filterTables(schema, filterType, searchQuery) {
     );
     filtered = filtered.filter(t => relatedNames.has(t.name));
   }
-  // 'all' — no prefix filter
 
   // Apply search query
   if (searchQuery && searchQuery.trim()) {
@@ -195,22 +180,17 @@ function filterTables(schema, filterType, searchQuery) {
     );
   }
 
-  // Cap at 1000 — vis.js can handle large graphs with physics disabled above ~500 nodes
-  return filtered.slice(0, 1000);
+  // Cap removed entirely to support visualizing everything
+  return filtered;
 }
 
 // ── ERD Rendering ──────────────────────────────────────────────────────────
 
 /**
  * Render a vis.js network graph inside the given container element.
- *
- * @param {string}   containerId  ID of the .erd-network div
- * @param {object}   schema       Full schema object { tables, raw_tables, columns, relationships }
- * @param {object}   [highlights] { added: Set, removed: Set, modified: Set }
- * @param {object[]} [tableList]  Pre-filtered table list to render; if omitted, uses schema.tables
- * @returns {vis.Network}
+ * Heavily optimized for huge (2000+ nodes) ServiceNow environments.
  */
-function renderERD(containerId, schema, highlights = {}, tableList) {
+function renderERD(containerId, schema, highlights = {}, tableList, noticeId) {
   const container = $(containerId);
   if (!container) return null;
 
@@ -221,17 +201,14 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
   const removedSet  = highlights.removed  || new Set();
   const modifiedSet = highlights.modified || new Set();
 
-  // Use the provided pre-filtered list, or fall back to schema.tables
   const tables = tableList || schema.tables || [];
-
-  // Build a set of visible table names for edge filtering
   const visibleTableNames = new Set(tables.map(t => t.name));
 
-  // For large graphs (>200 nodes) disable physics after stabilisation to keep it responsive
+  // Scale tiers for performance optimization
   const isLargeGraph = tables.length > 200;
+  const isExtremeGraph = tables.length > 800; // Triggers if visualizing the full SN instance
 
   tables.forEach(table => {
-    // Highlight overrides take precedence over type-based colour
     let bg, border;
     if (addedSet.has(table.name)) {
       bg = '#1a7a4a'; border = '#155f3a';
@@ -259,46 +236,53 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
     });
   });
 
-  // Only draw edges where both endpoints are visible
+  // Render edges contextually
   (schema.relationships || []).forEach(rel => {
     if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
     edges.push({
       from:   rel.from,
       to:     rel.to,
-      label:  rel.field,
+      label:  isExtremeGraph ? undefined : rel.field, // Omit edge labels on huge graphs for speed
       arrows: 'to',
       color:  { color: '#666666', highlight: '#0066cc', hover: '#0066cc' },
       font:   { size: 9, color: '#aaaaaa', strokeWidth: 0 },
-      smooth: { type: 'continuous' },
+      smooth: !isLargeGraph, // Disable smooth curves for major performance gains
     });
   });
 
-  const data    = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+  const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+
   const options = {
-    physics: {
-      enabled: !isLargeGraph,
-      solver: 'forceAtlas2Based',
-      forceAtlas2Based: {
-        gravitationalConstant: -80,
-        centralGravity: 0.005,
-        springLength: 150,
-        springConstant: 0.05,
-        damping: 0.5,
-      },
-      stabilization: {
-        enabled: true,
-        iterations: isLargeGraph ? 50 : 200,
-        updateInterval: 25,
-        onlyDynamicEdges: false,
-        fit: true,
-      },
-    },
+    // If it's an extreme graph, disable physics instantly to stop canvas crashing/freezing
+    physics: isExtremeGraph 
+      ? { enabled: false } 
+      : {
+          enabled: !isLargeGraph,
+          solver: 'forceAtlas2Based',
+          forceAtlas2Based: {
+            gravitationalConstant: -80,
+            centralGravity: 0.005,
+            springLength: 150,
+            springConstant: 0.05,
+            damping: 0.5,
+          },
+          stabilization: {
+            enabled: true,
+            iterations: isLargeGraph ? 50 : 200,
+            updateInterval: 25,
+            onlyDynamicEdges: false,
+            fit: true,
+          },
+        },
+    layout: isExtremeGraph ? { improvedLayout: false, randomSeed: 42 } : {},
     interaction: {
       navigationButtons: true,
       keyboard: false,
       zoomView: true,
-      hover: true,
+      hover: !isExtremeGraph, // Turn off heavy hover calculations on huge graphs
       tooltipDelay: 150,
+      hideEdgesOnDrag: isExtremeGraph, // Performance trick: hides lines while panning
+      hideEdgesOnZoom: isExtremeGraph,
     },
     nodes: {
       shape: 'box',
@@ -309,20 +293,24 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
     edges: {
       width: 1,
       selectionWidth: 2,
+      smooth: isLargeGraph ? { enabled: false } : { type: 'continuous' },
     },
     configure: false,
   };
 
+  if (noticeId) {
+    const noticeEl = $(noticeId);
+    if (noticeEl) noticeEl.classList.toggle('visible', isLargeGraph);
+  }
+
   const network = new vis.Network(container, data, options);
 
-  // For large graphs: after stabilisation, disable physics so the graph stops
-  // moving and the browser stays responsive.
-  if (isLargeGraph) {
+  // Fallback engine deceleration check
+  if (isLargeGraph && !isExtremeGraph) {
     network.once('stabilizationIterationsDone', () => {
       network.setOptions({ physics: { enabled: false } });
       network.fit();
     });
-    // Fallback: disable physics after 3 s regardless
     setTimeout(() => {
       network.setOptions({ physics: { enabled: false } });
     }, 3000);
@@ -335,7 +323,6 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
 
 function renderTableList(listId, tables, highlights = {}) {
   const container = $(listId);
-
   if (!container) return;
 
   const addedSet    = highlights.added    || new Set();
@@ -349,6 +336,7 @@ function renderTableList(listId, tables, highlights = {}) {
     return;
   }
 
+  // Virtualization block or straightforward parsing
   tables.forEach(table => {
     const div = document.createElement('div');
     div.className = 'table-list-item';
@@ -400,19 +388,20 @@ async function connectInstance(n) {
   const tid = startFakeProgress(prefix, 'Fetching schema from ServiceNow…');
 
   try {
-    // Always fetch all tables from the server; client-side filtering handles display
+    // MODIFIED: Changed include_core to true to systematically scrape all out-of-the-box tables
     const schema = await apiPost('fetch-schema', {
       instance_url: creds.instance_url,
-      username:     creds.username,
-      password:     creds.password,
-      include_core: false, // fetch u_*/x_* columns; raw_tables has everything
+      username:      creds.username,
+      password:      creds.password,
+      include_core: true, 
     });
 
     stopFakeProgress(prefix, tid, true);
     state[`inst${n}`].schema      = schema;
     state[`inst${n}`].connected   = true;
-    // Preserve any filter the user already selected; default to user_custom
-    const filterType  = state[`inst${n}`].filterType  || 'user_custom';
+
+    // MODIFIED: Changed default initial fallback to 'all' instead of 'user_custom'
+    const filterType  = state[`inst${n}`].filterType  || 'all';
     const searchQuery = state[`inst${n}`].searchQuery || '';
 
     const totalTables    = schema.total_tables    ?? (schema.raw_tables || schema.tables).length;
@@ -420,27 +409,22 @@ async function connectInstance(n) {
 
     setStatus(`inst${n}`, 'connected', `✓ Connected — ${totalTables} tables`);
 
-    // Mark card as connected
     const card = $(`card-inst${n}`);
     if (card) { card.classList.add('connected'); card.classList.remove(n === 2 ? 'inst2' : ''); }
 
-    // Update "Showing X of Y" counter
     updateErdCounter(n, filteredTables.length, totalTables);
 
-    // Show ERD with filtered table list
     hideEl(`erd-ph-inst${n}`);
     showEl(`erd-net-inst${n}`);
-    const network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables);
+    const network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`);
     state[`inst${n}`].network = network;
 
-    // Show table list — use raw_tables (full set) so all tables are listed
     const allTables = schema.raw_tables || schema.tables || [];
     showEl(`table-list-inst${n}-wrap`);
     $(`table-count-inst${n}`).textContent = allTables.length;
     renderTableList(`table-list-inst${n}`, allTables);
     wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, allTables, {});
 
-    // Wire up the ERD filter dropdown and search input
     wireErdFilter(n);
 
     showAlert(`alert-inst${n}`, 'success',
@@ -468,10 +452,6 @@ function updateErdCounter(n, filtered, total) {
 
 // ── ERD filter wiring ──────────────────────────────────────────────────────
 
-/**
- * Wire up the filter dropdown and search input for an instance's ERD.
- * Safe to call multiple times — removes old listeners by replacing elements.
- */
 function wireErdFilter(n) {
   const filterSel = $(`table-filter-inst${n}`);
   const searchIn  = $(`erd-search-inst${n}`);
@@ -481,7 +461,7 @@ function wireErdFilter(n) {
     const schema = state[`inst${n}`].schema;
     if (!schema) return;
 
-    const filterType  = filterSel ? filterSel.value : (state[`inst${n}`].filterType || 'user_custom');
+    const filterType  = filterSel ? filterSel.value : (state[`inst${n}`].filterType || 'all');
     const searchQuery = searchIn  ? searchIn.value   : (state[`inst${n}`].searchQuery || '');
 
     state[`inst${n}`].filterType  = filterType;
@@ -492,15 +472,13 @@ function wireErdFilter(n) {
 
     updateErdCounter(n, filteredTables.length, totalTables);
 
-    // Re-render ERD with new filter
     if (state[`inst${n}`].network) {
       state[`inst${n}`].network.destroy();
     }
     showEl(`erd-net-inst${n}`);
-    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables);
+    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`);
   };
 
-  // Use a debounced handler for the search input to avoid re-rendering on every keystroke
   let searchTimer = null;
   const debouncedApply = () => {
     clearTimeout(searchTimer);
@@ -508,7 +486,6 @@ function wireErdFilter(n) {
   };
 
   if (filterSel) {
-    // Clone to remove any previously attached listeners
     const newSel = filterSel.cloneNode(true);
     filterSel.parentNode.replaceChild(newSel, filterSel);
     newSel.addEventListener('change', applyFilter);
@@ -575,39 +552,36 @@ function renderSchemaResults(result) {
     <div class="stat-box amber"><div class="stat-val">${s.modified_count}</div><div class="stat-lbl">Modified</div></div>
   `;
 
-  // Build highlight sets
-  const addedSet    = new Set((result.added_tables   || []).map(t => t.name));
+  const addedSet    = new Set((result.added_tables    || []).map(t => t.name));
   const removedSet  = new Set((result.removed_tables || []).map(t => t.name));
   const modifiedSet = new Set((result.modified_tables || []).map(t => t.table));
 
-  // Re-render ERDs with highlights, preserving each instance's current filter
   if (state.inst1.schema && state.inst1.network) {
     const filtered1 = filterTables(state.inst1.schema,
-      state.inst1.filterType  || 'user_custom',
+      state.inst1.filterType  || 'all',
       state.inst1.searchQuery || '');
     state.inst1.network.destroy();
     state.inst1.network = renderERD('erd-net-inst1', state.inst1.schema,
       { removed: removedSet, modified: modifiedSet },
-      filtered1);
+      filtered1, 'erd-large-notice-inst1');
   }
   if (state.inst2.schema && state.inst2.network) {
     const filtered2 = filterTables(state.inst2.schema,
-      state.inst2.filterType  || 'user_custom',
+      state.inst2.filterType  || 'all',
       state.inst2.searchQuery || '');
     state.inst2.network.destroy();
     state.inst2.network = renderERD('erd-net-inst2', state.inst2.schema,
       { added: addedSet, modified: modifiedSet },
-      filtered2);
+      filtered2, 'erd-large-notice-inst2');
   }
 
-  // Re-render table lists with highlights
   if (state.inst1.schema) {
-    renderTableList('table-list-inst1', state.inst1.schema.tables,
-      { removed: removedSet, modified: modifiedSet });
+    const list1 = state.inst1.schema.raw_tables || state.inst1.schema.tables;
+    renderTableList('table-list-inst1', list1, { removed: removedSet, modified: modifiedSet });
   }
   if (state.inst2.schema) {
-    renderTableList('table-list-inst2', state.inst2.schema.tables,
-      { added: addedSet, modified: modifiedSet });
+    const list2 = state.inst2.schema.raw_tables || state.inst2.schema.tables;
+    renderTableList('table-list-inst2', list2, { added: addedSet, modified: modifiedSet });
   }
 
   // Added tables list
@@ -671,7 +645,7 @@ function renderSchemaResults(result) {
 
 async function runDataCompare() {
   const tableName   = $('data-table-name').value.trim();
-  const keyCols     = $('data-key-cols').value.trim();
+  const keyCols      = $('data-key-cols').value.trim();
   const compareCols = $('data-compare-cols').value.trim();
 
   clearAlert('alert-data');
@@ -695,7 +669,7 @@ async function runDataCompare() {
       instance2_url:  c2.instance_url,
       instance2_user: c2.username,
       instance2_pass: c2.password,
-      table_name:     tableName,
+      table_name:      tableName,
       key_columns:    JSON.stringify(keyArr),
       compare_columns: JSON.stringify(compareArr),
     });
@@ -796,7 +770,6 @@ function renderGenericTable(tableId, rows) {
 function downloadReport() {
   const rows = [];
 
-  // Schema summary
   if (state.schemaCompareResult) {
     const r = state.schemaCompareResult;
     const s = r.summary;
@@ -828,7 +801,6 @@ function downloadReport() {
     rows.push([]);
   }
 
-  // Data summary
   if (state.dataCompareResult) {
     const r = state.dataCompareResult;
     const s = r.summary;
@@ -865,7 +837,6 @@ function downloadReport() {
 $('btn-connect-inst1').addEventListener('click', () => connectInstance(1));
 $('btn-connect-inst2').addEventListener('click', () => connectInstance(2));
 
-// Allow Enter key in credential fields
 ['inst1-url','inst1-user','inst1-pass'].forEach(id => {
   $(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') connectInstance(1); });
 });
@@ -887,5 +858,3 @@ $('btn-close-data-panel').addEventListener('click', () => {
 $('btn-run-data-compare').addEventListener('click', runDataCompare);
 
 $('btn-download-report').addEventListener('click', downloadReport);
-
-// ── ERD filter controls are wired in wireErdFilter() called from connectInstance() ──
