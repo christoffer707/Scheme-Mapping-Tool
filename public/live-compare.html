@@ -130,10 +130,10 @@
 
     /* ── ERD Visualizer ───────────────────────────────────────────────── */
     .erd-container {
-      border: 1px solid #e4e8ef;
+      border: 1px solid #333;
       border-radius: 8px;
-      background: #fafbfc;
-      height: 380px;
+      background: #1a1a2e;
+      height: 500px;
       position: relative;
       overflow: hidden;
     }
@@ -144,13 +144,59 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      color: #bbb;
+      color: #666;
       font-size: 13px;
       gap: 8px;
       pointer-events: none;
     }
     .erd-placeholder .ph-icon { font-size: 36px; }
     .erd-network { width: 100%; height: 100%; }
+
+    /* ── ERD toolbar (above canvas) ───────────────────────────────────── */
+    .erd-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .erd-toolbar-left  { display: flex; align-items: center; gap: 10px; }
+    .erd-toolbar-right { display: flex; align-items: center; gap: 8px; }
+    .erd-title { font-size: 12px; font-weight: 600; color: #555; }
+
+    /* ── ERD legend ───────────────────────────────────────────────────── */
+    .erd-legend {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .erd-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: #666;
+    }
+    .erd-legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    /* ── Show-all toggle ──────────────────────────────────────────────── */
+    .erd-toggle-label {
+      font-size: 12px;
+      color: #666;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .erd-toggle-label input[type="checkbox"] { cursor: pointer; }
 
     /* ── Table list ───────────────────────────────────────────────────── */
     .table-list {
@@ -386,7 +432,22 @@
 
       <!-- ERD Visualizer -->
       <div class="mt-12">
-        <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:6px;">ERD Visualizer</div>
+        <div class="erd-toolbar">
+          <div class="erd-toolbar-left">
+            <div class="erd-title">ERD Visualizer</div>
+            <div class="erd-legend">
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#0066cc;"></div>Custom (u_*)</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Extended (x_*)</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#888888;"></div>Core</div>
+            </div>
+          </div>
+          <div class="erd-toolbar-right">
+            <label class="erd-toggle-label">
+              <input type="checkbox" id="show-all-inst1" />
+              Show all tables
+            </label>
+          </div>
+        </div>
         <div class="erd-container" id="erd-inst1">
           <div class="erd-placeholder" id="erd-ph-inst1">
             <div class="ph-icon">🗄️</div>
@@ -440,7 +501,22 @@
 
       <!-- ERD Visualizer -->
       <div class="mt-12">
-        <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:6px;">ERD Visualizer</div>
+        <div class="erd-toolbar">
+          <div class="erd-toolbar-left">
+            <div class="erd-title">ERD Visualizer</div>
+            <div class="erd-legend">
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#0066cc;"></div>Custom (u_*)</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Extended (x_*)</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#888888;"></div>Core</div>
+            </div>
+          </div>
+          <div class="erd-toolbar-right">
+            <label class="erd-toggle-label">
+              <input type="checkbox" id="show-all-inst2" />
+              Show all tables
+            </label>
+          </div>
+        </div>
         <div class="erd-container" id="erd-inst2">
           <div class="erd-placeholder" id="erd-ph-inst2">
             <div class="ph-icon">🗄️</div>

@@ -8,8 +8,8 @@
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
-  inst1: { schema: null, network: null, connected: false },
-  inst2: { schema: null, network: null, connected: false },
+  inst1: { schema: null, network: null, connected: false, filterMode: 'custom' },
+  inst2: { schema: null, network: null, connected: false, filterMode: 'custom' },
   schemaCompareResult: null,
   dataCompareResult:   null,
 };
@@ -121,6 +121,33 @@ function validateCredentials(creds, label) {
   if (!creds.password)     throw new Error(`${label}: Password is required.`);
 }
 
+// ── ERD Helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Classify a table name into 'custom', 'extended', or 'core'.
+ * @param {string} tableName
+ * @returns {'custom'|'extended'|'core'}
+ */
+function getTableType(tableName) {
+  if (tableName.startsWith('u_')) return 'custom';
+  if (tableName.startsWith('x_')) return 'extended';
+  return 'core';
+}
+
+/**
+ * Return the base fill colour for a table based on its type.
+ * Highlight overrides (added/removed/modified) take precedence in renderERD.
+ * @param {string} tableName
+ * @returns {string} hex colour
+ */
+function getTableColor(tableName) {
+  switch (getTableType(tableName)) {
+    case 'custom':   return '#0066cc'; // blue
+    case 'extended': return '#7c3aed'; // purple
+    default:         return '#888888'; // gray (core)
+  }
+}
+
 // ── ERD Rendering ──────────────────────────────────────────────────────────
 
 /**
@@ -128,9 +155,10 @@ function validateCredentials(creds, label) {
  * @param {string} containerId  ID of the .erd-network div
  * @param {object} schema       { tables, columns, relationships }
  * @param {object} [highlights] { added: Set, removed: Set, modified: Set }
+ * @param {'custom'|'all'} [filterMode]  'custom' = only u_*/x_* tables; 'all' = everything
  * @returns {vis.Network}
  */
-function renderERD(containerId, schema, highlights = {}) {
+function renderERD(containerId, schema, highlights = {}, filterMode = 'custom') {
   const container = $(containerId);
   if (!container) return null;
 
@@ -141,38 +169,93 @@ function renderERD(containerId, schema, highlights = {}) {
   const removedSet  = highlights.removed  || new Set();
   const modifiedSet = highlights.modified || new Set();
 
-  (schema.tables || []).forEach(table => {
-    let bg = '#0066cc', border = '#003d99';
-    if (addedSet.has(table.name))    { bg = '#1a7a4a'; border = '#155f3a'; }
-    if (removedSet.has(table.name))  { bg = '#c0392b'; border = '#a93226'; }
-    if (modifiedSet.has(table.name)) { bg = '#d68910'; border = '#b7770d'; }
+  // Filter tables based on mode
+  const tables = (schema.tables || []).filter(table => {
+    if (filterMode === 'all') return true;
+    const type = getTableType(table.name);
+    return type === 'custom' || type === 'extended';
+  });
+
+  // Build a set of visible table names for edge filtering
+  const visibleTableNames = new Set(tables.map(t => t.name));
+
+  tables.forEach(table => {
+    // Highlight overrides take precedence over type-based colour
+    let bg, border;
+    if (addedSet.has(table.name)) {
+      bg = '#1a7a4a'; border = '#155f3a';
+    } else if (removedSet.has(table.name)) {
+      bg = '#c0392b'; border = '#a93226';
+    } else if (modifiedSet.has(table.name)) {
+      bg = '#d68910'; border = '#b7770d';
+    } else {
+      bg = getTableColor(table.name);
+      // Darken the border slightly
+      border = bg === '#0066cc' ? '#003d99'
+             : bg === '#7c3aed' ? '#5b21b6'
+             : '#555555';
+    }
 
     const colCount = (schema.columns?.[table.name] || []).length;
     nodes.push({
       id:    table.name,
       label: table.label || table.name,
       title: `Table: ${table.name}\nColumns: ${colCount}`,
-      color: { background: bg, border, highlight: { background: bg } },
-      font:  { color: 'white', size: 13 },
+      color: {
+        background: bg,
+        border,
+        highlight: { background: bg, border },
+        hover:      { background: bg, border },
+      },
+      font:  { color: '#ffffff', size: 13 },
     });
   });
 
+  // Only draw edges where both endpoints are visible
   (schema.relationships || []).forEach(rel => {
+    if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
     edges.push({
       from:   rel.from,
       to:     rel.to,
       label:  rel.field,
       arrows: 'to',
-      color:  { color: '#bbb', highlight: '#0066cc' },
-      font:   { size: 10, color: '#888' },
+      color:  { color: '#555555', highlight: '#0066cc', hover: '#0066cc' },
+      font:   { size: 9, color: '#888888', strokeWidth: 0 },
+      smooth: { type: 'continuous' },
     });
   });
 
   const data    = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
   const options = {
-    physics: { enabled: true, stabilization: { iterations: 150 } },
-    interaction: { navigationButtons: false, keyboard: false, zoomView: true },
-    nodes: { shape: 'box', margin: 8 },
+    physics: {
+      enabled: true,
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: {
+        gravitationalConstant: -50,
+        centralGravity: 0.01,
+        springLength: 120,
+        springConstant: 0.08,
+        damping: 0.4,
+      },
+      stabilization: { iterations: 200, updateInterval: 25 },
+    },
+    interaction: {
+      navigationButtons: true,
+      keyboard: false,
+      zoomView: true,
+      hover: true,
+      tooltipDelay: 150,
+    },
+    nodes: {
+      shape: 'box',
+      margin: 8,
+      borderWidth: 1,
+      shadow: { enabled: true, color: 'rgba(0,0,0,0.4)', size: 6, x: 2, y: 2 },
+    },
+    edges: {
+      width: 1,
+      selectionWidth: 2,
+    },
   };
 
   return new vis.Network(container, data, options);
@@ -182,6 +265,7 @@ function renderERD(containerId, schema, highlights = {}) {
 
 function renderTableList(listId, tables, highlights = {}) {
   const container = $(listId);
+
   if (!container) return;
 
   const addedSet    = highlights.added    || new Set();
@@ -245,16 +329,22 @@ async function connectInstance(n) {
   setStatus(`inst${n}`, 'connecting', '⏳ Connecting…');
   const tid = startFakeProgress(prefix, 'Fetching schema from ServiceNow…');
 
+  // Read the "show all tables" toggle for this instance
+  const includeCore = $(`show-all-inst${n}`)?.checked ?? false;
+  const filterMode  = includeCore ? 'all' : 'custom';
+
   try {
     const schema = await apiPost('fetch-schema', {
       instance_url: creds.instance_url,
       username:     creds.username,
       password:     creds.password,
+      include_core: includeCore,
     });
 
     stopFakeProgress(prefix, tid, true);
-    state[`inst${n}`].schema    = schema;
-    state[`inst${n}`].connected = true;
+    state[`inst${n}`].schema     = schema;
+    state[`inst${n}`].connected  = true;
+    state[`inst${n}`].filterMode = filterMode;
 
     setStatus(`inst${n}`, 'connected', `✓ Connected — ${schema.tables.length} tables`);
 
@@ -265,7 +355,7 @@ async function connectInstance(n) {
     // Show ERD
     hideEl(`erd-ph-inst${n}`);
     showEl(`erd-net-inst${n}`);
-    const network = renderERD(`erd-net-inst${n}`, schema);
+    const network = renderERD(`erd-net-inst${n}`, schema, {}, filterMode);
     state[`inst${n}`].network = network;
 
     // Show table list
@@ -344,16 +434,18 @@ function renderSchemaResults(result) {
   const removedSet  = new Set((result.removed_tables || []).map(t => t.name));
   const modifiedSet = new Set((result.modified_tables || []).map(t => t.table));
 
-  // Re-render ERDs with highlights
+  // Re-render ERDs with highlights, preserving each instance's filter mode
   if (state.inst1.schema && state.inst1.network) {
     state.inst1.network.destroy();
     state.inst1.network = renderERD('erd-net-inst1', state.inst1.schema,
-      { removed: removedSet, modified: modifiedSet });
+      { removed: removedSet, modified: modifiedSet },
+      state.inst1.filterMode || 'custom');
   }
   if (state.inst2.schema && state.inst2.network) {
     state.inst2.network.destroy();
     state.inst2.network = renderERD('erd-net-inst2', state.inst2.schema,
-      { added: addedSet, modified: modifiedSet });
+      { added: addedSet, modified: modifiedSet },
+      state.inst2.filterMode || 'custom');
   }
 
   // Re-render table lists with highlights
@@ -643,3 +735,58 @@ $('btn-close-data-panel').addEventListener('click', () => {
 $('btn-run-data-compare').addEventListener('click', runDataCompare);
 
 $('btn-download-report').addEventListener('click', downloadReport);
+
+// ── Show-all-tables toggle handlers ───────────────────────────────────────
+
+/**
+ * Re-fetch schema (with or without core tables) and re-render the ERD
+ * when the user toggles the "Show all tables" checkbox.
+ */
+[1, 2].forEach(n => {
+  $(`show-all-inst${n}`)?.addEventListener('change', async (e) => {
+    const includeCore = e.target.checked;
+    const filterMode  = includeCore ? 'all' : 'custom';
+
+    // If not yet connected, just store the preference — nothing to re-render
+    if (!state[`inst${n}`].connected) {
+      state[`inst${n}`].filterMode = filterMode;
+      return;
+    }
+
+    const creds = getCredentials(n);
+    const prefix = `inst${n}`;
+    const tid = startFakeProgress(prefix, includeCore ? 'Loading all tables…' : 'Loading custom tables…');
+
+    try {
+      const schema = await apiPost('fetch-schema', {
+        instance_url: creds.instance_url,
+        username:     creds.username,
+        password:     creds.password,
+        include_core: includeCore,
+      });
+
+      stopFakeProgress(prefix, tid, true);
+      state[`inst${n}`].schema     = schema;
+      state[`inst${n}`].filterMode = filterMode;
+
+      setStatus(`inst${n}`, 'connected', `✓ Connected — ${schema.tables.length} tables`);
+
+      // Re-render ERD
+      if (state[`inst${n}`].network) {
+        state[`inst${n}`].network.destroy();
+      }
+      showEl(`erd-net-inst${n}`);
+      state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filterMode);
+
+      // Re-render table list
+      $(`table-count-inst${n}`).textContent = schema.tables.length;
+      renderTableList(`table-list-inst${n}`, schema.tables);
+      wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, schema.tables, {});
+    } catch (err) {
+      stopFakeProgress(prefix, tid, false);
+      showAlert(`alert-inst${n}`, 'error', err.message);
+      // Revert checkbox on error
+      e.target.checked = !includeCore;
+    }
+  });
+});

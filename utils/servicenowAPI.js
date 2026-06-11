@@ -75,22 +75,30 @@ export async function testServiceNowConnection(instanceUrl, username, password) 
  * @param {string} instanceUrl
  * @param {string} username
  * @param {string} password
- * @param {{ tableLimit?: number }} [opts]
+ * @param {{ tableLimit?: number, includeCore?: boolean }} [opts]
  * @returns {{ tables: object[], columns: object, relationships: object[], raw_tables: object[] }}
  */
 export async function fetchServiceNowSchema(instanceUrl, username, password, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
   const client = buildClient(url, username, password);
-  const tableLimit = opts.tableLimit ?? 200;
+  // Default to 100 tables max; includeCore=false means only u_* and x_* tables
+  const tableLimit  = opts.tableLimit  ?? 100;
+  const includeCore = opts.includeCore ?? false;
 
   // 1. Fetch table list
   let tablesRaw;
   try {
+    // When includeCore is false, restrict to custom (u_*) and extended (x_*) tables only.
+    // When includeCore is true, also include sys_* and all other tables up to the limit.
+    const sysparm_query = includeCore
+      ? 'nameSTARTSWITHsys^ORnameSTARTSWITHu_^ORnameSTARTSWITHx_'
+      : 'nameSTARTSWITHu_^ORnameSTARTSWITHx_';
+
     const res = await client.get('/api/now/table/sys_db_object', {
       params: {
         sysparm_limit: tableLimit,
         sysparm_fields: 'name,label,sys_id,super_class',
-        sysparm_query: 'nameSTARTSWITHsys^ORnameSTARTSWITHu_^ORnameSTARTSWITHx_',
+        sysparm_query,
       },
     });
     tablesRaw = res.data.result || [];
@@ -139,11 +147,16 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
     });
   }
 
-  // 4. Build relationships list
+  // 4. Build relationships list — only include edges where both ends are in the fetched set
+  const tableNameSet = new Set(tablesRaw.map(t => t.name));
   const relationships = [];
   for (const [tableName, cols] of Object.entries(columnsByTable)) {
     for (const col of cols) {
-      if (col.reference && col.reference !== tableName) {
+      if (
+        col.reference &&
+        col.reference !== tableName &&
+        tableNameSet.has(col.reference)
+      ) {
         relationships.push({
           from: tableName,
           to: col.reference,
