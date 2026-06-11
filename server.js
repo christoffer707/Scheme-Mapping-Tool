@@ -279,16 +279,18 @@ function getHTMLPage() {
       });
     }
 
+    // Contextual Graphing (1st-degree table relations only)
     function selectAndRenderTable(targetTableName, clickedElement) {
       document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
       if (clickedElement) clickedElement.classList.add('active');
 
-      document.getElementById('canvas-status').innerText = \`Viewing dependencies for: \${targetTableName}\`;
+      document.getElementById('canvas-status').innerText = \`Calculating Layout for: \${targetTableName} (Please wait...)\`;
       fetchTableArtifacts(targetTableName);
 
       const nodes = new vis.DataSet();
       const edges = new vis.DataSet();
       const addedNodes = new Set();
+      let edgeCount = 0;
 
       function addNode(tableName, isCenter = false) {
         if (addedNodes.has(tableName)) return;
@@ -307,20 +309,49 @@ function getHTMLPage() {
 
       addNode(targetTableName, true);
 
+      // Only map table relationships
       currentERD.relationships.forEach(rel => {
         if (rel.from === targetTableName || rel.to === targetTableName) {
           addNode(rel.from === targetTableName ? rel.to : rel.from);
           edges.add({
             from: rel.from, to: rel.to, label: rel.field, arrows: 'to',
-            color: { color: '#888', highlight: '#00aaff' }, font: { size: 10, color: '#aaa', strokeWidth: 0 }
+            color: { color: '#888', highlight: '#00aaff' }, font: { size: 10, color: '#aaa', strokeWidth: 0 },
+            smooth: false // Prevents curved lines, makes massive graphs much cleaner
           });
+          edgeCount++;
         }
       });
 
       if (network) network.destroy();
-      network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
-        physics: { enabled: true, barnesHut: { gravitationalConstant: -2000, centralGravity: 0.3 } },
-        interaction: { hover: true }
+      
+      const container = document.getElementById('network');
+      const options = {
+        physics: {
+          enabled: true,
+          solver: 'forceAtlas2Based',
+          forceAtlas2Based: {
+            gravitationalConstant: -100,
+            centralGravity: 0.01,
+            springConstant: 0.08,
+            springLength: 150
+          },
+          stabilization: {
+            enabled: true,
+            iterations: 150, // Does a quick 1-second math calculation to place nodes perfectly
+            updateInterval: 50
+          }
+        },
+        interaction: { hover: true, dragNodes: true, hideEdgesOnDrag: true },
+        edges: { smooth: false } // Straight lines
+      };
+
+      network = new vis.Network(container, { nodes, edges }, options);
+
+      // CRITICAL FIX: The moment the 1-second layout calculation is done, freeze all movement!
+      network.once('stabilizationIterationsDone', () => {
+        network.setOptions({ physics: { enabled: false } }); // Locks the nodes in place
+        document.getElementById('canvas-status').innerText = \`Viewing table dependencies for: \${targetTableName} (\${edgeCount} related tables)\`;
+        network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
       });
     }
 
