@@ -233,7 +233,7 @@ function getHTMLPage() {
           <span style="color:#aaa;">Search & click a table in the sidebar to map its relationships.</span>
         \`;
 
-        // Render Macro view by default, but HIDE EDGES so it doesn't hairball
+        // Render Macro view by default, HIDE EDGES so it doesn't hairball
         renderMacroGraph(true, initialStatusHTML);
 
       } catch (error) {
@@ -316,10 +316,10 @@ function getHTMLPage() {
           edges.add({
             from: rel.from, to: rel.to, label: rel.field, arrows: 'to',
             color: { color: '#888', highlight: '#00aaff' }, 
-            // Gives the text a clean white box so they don't visually overlap the lines or background
-            font: { size: 11, color: '#111', background: '#ffffff', strokeWidth: 2, strokeColor: '#ffffff', align: 'middle' },
-            // Ensures multiple edges between the same two tables fan out instead of overlapping
-            smooth: { type: 'curvedCW', roundness: 0.2 } 
+            // Gives the text a clean white box so they are readable over the lines and canvas
+            font: { size: 11, color: '#111', background: '#ffffff', strokeWidth: 0, align: 'middle' },
+            // Fanning them out so they don't perfectly stack
+            smooth: { type: 'curvedCW', roundness: 0.15 } 
           });
           edgeCount++;
         }
@@ -347,23 +347,32 @@ function getHTMLPage() {
       });
     }
 
-    // Pass "hideEdges = true" on initial load to prevent hairball crash
+    // Macro Graph (Uses Fermat's Spiral for perfect, instant node distribution)
     function renderMacroGraph(hideEdges = false, customStatusHTML = null) {
       if (customStatusHTML) {
         document.getElementById('canvas-status').innerHTML = customStatusHTML;
       } else {
         document.getElementById('canvas-status').innerText = hideEdges 
           ? 'Rendering instance overview (Lines hidden for performance)...' 
-          : 'Rendering entire instance schema... WARNING: This may cause extreme lag.';
+          : 'Rendering entire instance schema... WARNING: Rendering 10k+ relationship lines will cause severe lag.';
       }
 
       const nodes = new vis.DataSet();
       const edges = new vis.DataSet();
       
-      Object.keys(currentERD.entities).forEach(name => {
+      const tableNames = Object.keys(currentERD.entities);
+      const goldenAngle = 137.508 * (Math.PI / 180);
+      
+      tableNames.forEach((name, index) => {
         const c = getTableColor(name);
+        // Fermat's Spiral layout guarantees perfect, instant spacing with zero overlapping
+        const r = 30 * Math.sqrt(index);
+        const theta = index * goldenAngle;
+
         nodes.add({
           id: name, label: name,
+          x: r * Math.cos(theta),
+          y: r * Math.sin(theta),
           color: { background: c.bg, border: c.border }, font: { color: 'white', size: 10 },
           shape: 'box', margin: 6
         });
@@ -372,17 +381,22 @@ function getHTMLPage() {
       if (!hideEdges) {
         currentERD.relationships.forEach(rel => {
           if (currentERD.entities[rel.from] && currentERD.entities[rel.to]) {
-            edges.add({ from: rel.from, to: rel.to, arrows: 'to', color: { color: '#444' } });
+            edges.add({ 
+              from: rel.from, to: rel.to, arrows: 'to', 
+              color: { color: 'rgba(136,136,136,0.3)' }, // Make lines faint so nodes stand out
+              smooth: false 
+            });
           }
         });
       }
 
       if (network) network.destroy();
       network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
-        physics: { enabled: false }, 
-        layout: { improvedLayout: false },
-        interaction: { hideEdgesOnDrag: true, hideEdgesOnZoom: true }
+        physics: { enabled: false }, // Zero physics calculation needed because of the spiral coordinates
+        interaction: { hideEdgesOnDrag: true, hideEdgesOnZoom: true, dragNodes: false }
       });
+      
+      network.fit();
     }
 
     async function fetchTableArtifacts(tableName) {
