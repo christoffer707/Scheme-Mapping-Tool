@@ -4,8 +4,6 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import comparisonRouter from './routes/comparison.js';
 import liveComparisonRouter from './routes/liveComparison.js';
-
-// Import the optimized, uncapped schema fetcher we built
 import { fetchServiceNowSchema } from './utils/servicenowAPI.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -15,19 +13,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Serve static files from /public
 app.use(express.static(join(__dirname, 'public')));
-
-// Mount comparison / analysis routes
 app.use('/api', comparisonRouter);
-
-// Mount live dual-instance comparison routes
 app.use('/api/live', liveComparisonRouter);
 
-// ServiceNow schema cache
 let schemaCache = null;
 
-// API endpoint to generate ERD
 app.post('/api/erd/generate', async (req, res) => {
   try {
     const { instance, username, password } = req.body;
@@ -36,10 +27,8 @@ app.post('/api/erd/generate', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: instance, username, password' });
     }
 
-    // Use the robust utility function to fetch everything without limits
     const schema = await fetchServiceNowSchema(instance, username, password, { includeCore: true });
 
-    // Map the robust schema output to the specific ERD format expected by this frontend
     const entities = {};
     schema.tables.forEach(t => {
       entities[t.name] = {
@@ -63,7 +52,6 @@ app.post('/api/erd/generate', async (req, res) => {
   }
 });
 
-// API endpoint to get cached ERD
 app.get('/api/erd', (req, res) => {
   if (!schemaCache) {
     return res.status(404).json({ error: 'No ERD generated yet. POST to /api/erd/generate first.' });
@@ -71,17 +59,14 @@ app.get('/api/erd', (req, res) => {
   res.json(schemaCache);
 });
 
-// Serve frontend
 app.get('/', (req, res) => {
   res.send(getHTMLPage());
 });
 
-// Serve comparison tool page
 app.get('/comparison', (req, res) => {
   res.sendFile(join(__dirname, 'public', 'comparison.html'));
 });
 
-// Serve live dual-instance comparison page
 app.get('/live-compare', (req, res) => {
   res.sendFile(join(__dirname, 'public', 'live-compare.html'));
 });
@@ -97,35 +82,64 @@ function getHTMLPage() {
   <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet" type="text/css" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
-    .container { display: flex; height: 100vh; }
-    .sidebar { width: 350px; background: white; border-right: 1px solid #ddd; overflow-y: auto; padding: 20px; z-index: 10; }
-    .main { flex: 1; display: flex; flex-direction: column; }
-    .controls { background: white; padding: 20px; border-bottom: 1px solid #ddd; }
-    /* Switched background to a sleek dark tone for better contrast */
-    #network { flex: 1; background: #1a1a2e; } 
-    .form-group { margin-bottom: 15px; }
-    label { display: block; font-weight: 600; margin-bottom: 5px; font-size: 14px; }
-    input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
-    button { background: #0066cc; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; width: 100%; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #333; overflow: hidden; }
+    .container { display: flex; height: 100vh; width: 100vw; }
+    
+    /* Sidebar */
+    .sidebar { width: 350px; background: white; border-right: 1px solid #ddd; display: flex; flex-direction: column; z-index: 10; }
+    .sidebar-header { padding: 20px; border-bottom: 1px solid #ddd; }
+    .controls { padding: 20px; border-bottom: 1px solid #ddd; background: #f9f9f9; }
+    .table-search-container { padding: 15px; border-bottom: 1px solid #ddd; background: #fff; }
+    .entity-list { flex: 1; overflow-y: auto; padding: 10px; }
+    
+    /* Main Canvas */
+    .main { flex: 1; position: relative; background: #1a1a2e; display: flex; }
+    #network { flex: 1; height: 100%; }
+    
+    /* Detail Panel (Right) */
+    .detail-panel { width: 400px; background: white; border-left: 1px solid #ddd; display: flex; flex-direction: column; transform: translateX(100%); transition: transform 0.3s ease; position: absolute; right: 0; top: 0; bottom: 0; z-index: 20; box-shadow: -4px 0 15px rgba(0,0,0,0.1); }
+    .detail-panel.open { transform: translateX(0); }
+    .detail-header { padding: 20px; background: #0066cc; color: white; display: flex; justify-content: space-between; align-items: center; }
+    .detail-close { cursor: pointer; font-size: 20px; font-weight: bold; }
+    .detail-body { flex: 1; overflow-y: auto; padding: 20px; }
+    .artifact-section { margin-bottom: 20px; }
+    .artifact-section h4 { border-bottom: 2px solid #eee; padding-bottom: 5px; margin-bottom: 10px; color: #555; }
+    .artifact-item { background: #f5f5f5; padding: 8px; margin-bottom: 5px; border-radius: 4px; font-size: 12px; border-left: 3px solid #7c3aed; }
+    
+    /* Form Elements */
+    .form-group { margin-bottom: 12px; }
+    label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 12px; color: #555; }
+    input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    input:focus { border-color: #0066cc; outline: none; }
+    button { background: #0066cc; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; width: 100%; transition: background 0.2s; }
     button:hover { background: #0052a3; }
-    .entity-list { margin-top: 20px; }
-    .entity-item { padding: 10px; background: #f9f9f9; border-radius: 4px; margin-bottom: 8px; cursor: pointer; border-left: 3px solid #0066cc; }
-    .entity-item:hover { background: #f0f0f0; }
-    .entity-item h4 { font-size: 13px; margin-bottom: 3px; }
-    .entity-item p { font-size: 12px; color: #666; }
-    #message { margin-bottom: 15px; }
-    .loading { text-align: center; padding: 10px; color: #666; background: #e2e3e5; border-radius: 4px; }
-    .error { color: #d32f2f; padding: 10px; background: #ffebee; border-radius: 4px; }
-    .success { color: #388e3c; padding: 10px; background: #e8f5e9; border-radius: 4px; }
+    
+    /* Table Items */
+    .entity-item { padding: 10px; background: #fff; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; cursor: pointer; border-left: 4px solid #0066cc; transition: background 0.1s; }
+    .entity-item:hover { background: #f0f7ff; }
+    .entity-item.active { background: #e6f2ff; border-color: #cce5ff; }
+    .entity-item h4 { font-size: 13px; margin-bottom: 3px; word-break: break-all; }
+    .entity-item p { font-size: 11px; color: #888; }
+    
+    /* Helpers */
+    .empty-state { text-align: center; color: #888; padding: 40px 20px; font-size: 14px; }
+    .alert { padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 13px; }
+    .alert.error { background: #ffebee; color: #c62828; border-left: 4px solid #c62828; }
+    .alert.success { background: #e8f5e9; color: #2e7d32; border-left: 4px solid #2e7d32; }
+    .alert.loading { background: #e3f2fd; color: #1565c0; border-left: 4px solid #1565c0; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="sidebar">
-      <h2>ServiceNow ERD Visualizer</h2>
-      <div style="margin-bottom:6px;margin-top:12px;padding:8px;background:#f0f7ff;border-radius:4px;"><a href="/comparison" style="color:#0066cc;font-size:13px;font-weight:600;text-decoration:none;">&#8644; Compare &amp; Analyze Instances &rarr;</a></div>
-      <div style="margin-bottom:12px;padding:8px;background:#f0fff4;border-radius:4px;"><a href="/live-compare" style="color:#1a7a4a;font-size:13px;font-weight:600;text-decoration:none;">&#9889; Live Dual-Instance Compare &rarr;</a></div>
+      <div class="sidebar-header">
+        <h2 style="font-size: 18px; color: #333;">SN ERD Visualizer</h2>
+        <div style="margin-top:10px; display:flex; gap:10px;">
+          <a href="/comparison" style="font-size:11px; color:#0066cc; text-decoration:none;">&#8644; Compare</a>
+          <a href="/live-compare" style="font-size:11px; color:#1a7a4a; text-decoration:none;">&#9889; Live Sync</a>
+        </div>
+      </div>
+      
       <div class="controls">
         <div id="message"></div>
         <div class="form-group">
@@ -134,24 +148,69 @@ function getHTMLPage() {
         </div>
         <div class="form-group">
           <label>Username</label>
-          <input type="text" id="username" placeholder="ServiceNow username">
+          <input type="text" id="username" placeholder="admin">
         </div>
         <div class="form-group">
           <label>Password</label>
-          <input type="password" id="password" placeholder="ServiceNow password">
+          <input type="password" id="password" placeholder="••••••••">
         </div>
-        <button onclick="generateERD()">Generate Full ERD</button>
+        <button onclick="generateERD()">Connect & Fetch Schema</button>
       </div>
-      <div class="entity-list" id="entityList"></div>
+
+      <div class="table-search-container" id="search-container" style="display:none;">
+        <input type="text" id="tableSearch" placeholder="Search tables (e.g., incident)..." onkeyup="filterTables()">
+        <div style="font-size: 11px; color: #888; margin-top: 6px;" id="table-count-label"></div>
+      </div>
+
+      <div class="entity-list" id="entityList">
+        <div class="empty-state">Connect to an instance to load tables.</div>
+      </div>
     </div>
+
     <div class="main">
       <div id="network"></div>
+      
+      <div class="detail-panel" id="detailPanel">
+        <div class="detail-header">
+          <div>
+            <div style="font-size: 12px; opacity: 0.8;">Selected Table</div>
+            <h3 id="dp-table-name" style="margin: 0; font-size: 18px; word-break: break-all;">table_name</h3>
+          </div>
+          <div class="detail-close" onclick="closeDetailPanel()">✕</div>
+        </div>
+        <div class="detail-body" id="dp-body">
+          <div class="empty-state" id="dp-loading">Loading table artifacts...</div>
+          
+          <div id="dp-content" style="display:none;">
+            <div class="artifact-section">
+              <h4>Fields & Columns</h4>
+              <div style="font-size:13px; color:#666;" id="dp-fields-count">0 fields</div>
+            </div>
+
+            <div class="artifact-section">
+              <h4>Business Rules</h4>
+              <div id="dp-brs"><div class="artifact-item" style="color:#888;">(Backend integration required)</div></div>
+            </div>
+
+            <div class="artifact-section">
+              <h4>Client Scripts & UI Policies</h4>
+              <div id="dp-scripts"><div class="artifact-item" style="color:#888;">(Backend integration required)</div></div>
+            </div>
+            
+            <div class="artifact-section">
+              <h4>Flows / Workflows</h4>
+              <div id="dp-flows"><div class="artifact-item" style="color:#888;">(Backend integration required)</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
   <script>
     let network = null;
     let currentERD = null;
+    let tableDOMNodes = []; // For fast searching
 
     async function generateERD() {
       const instance = document.getElementById('instance').value;
@@ -160,11 +219,11 @@ function getHTMLPage() {
       const messageDiv = document.getElementById('message');
 
       if (!instance || !username || !password) {
-        messageDiv.innerHTML = '<div class="error">Please fill in all fields</div>';
+        messageDiv.innerHTML = '<div class="alert error">Please fill in all fields</div>';
         return;
       }
 
-      messageDiv.innerHTML = '<div class="loading">Fetching entire schema...</div>';
+      messageDiv.innerHTML = '<div class="alert loading">Fetching entire schema. This may take a moment...</div>';
 
       try {
         const response = await fetch('/api/erd/generate', {
@@ -180,15 +239,22 @@ function getHTMLPage() {
 
         const data = await response.json();
         currentERD = data.erd;
-        messageDiv.innerHTML = \`<div class="success">\${data.message}</div>\`;
-        visualizeERD(data.erd);
-        populateEntityList(data.erd);
+        messageDiv.innerHTML = \`<div class="alert success">\${data.message}</div>\`;
+        
+        document.getElementById('search-container').style.display = 'block';
+        document.getElementById('table-count-label').innerText = \`\${Object.keys(currentERD.entities).length} tables loaded\`;
+        
+        populateEntityList(currentERD);
+        
+        // Initialize an empty network canvas
+        const container = document.getElementById('network');
+        network = new vis.Network(container, { nodes: [], edges: [] }, {});
+        
       } catch (error) {
-        messageDiv.innerHTML = \`<div class="error">Error: \${error.message}</div>\`;
+        messageDiv.innerHTML = \`<div class="alert error">Error: \${error.message}</div>\`;
       }
     }
 
-    // Helper to determine color based on table prefix
     function getTableColor(tableName) {
       if (tableName.startsWith('u_') || tableName.startsWith('x_')) return { bg: '#1a7a4a', border: '#155f3a' };
       if (
@@ -200,81 +266,134 @@ function getHTMLPage() {
       return { bg: '#0066cc', border: '#003d99' };
     }
 
-    function visualizeERD(erd) {
-      const nodes = [];
-      const edges = [];
-
-      // Create nodes for each entity with color coding
-      Object.entries(erd.entities).forEach(([name, entity], index) => {
-        const c = getTableColor(name);
-        nodes.push({
-          id: name,
-          label: entity.label || name,
-          title: \`Table: \${name}\\nFields: \${entity.fields.length}\`,
-          color: { background: c.bg, border: c.border, highlight: { background: c.bg, border: c.border } },
-          font: { color: 'white', size: 13 },
-          shape: 'box',
-          margin: 8
-        });
-      });
-
-      // Create edges for relationships
-      erd.relationships.forEach(rel => {
-        edges.push({
-          from: rel.from,
-          to: rel.to,
-          label: rel.field,
-          arrows: 'to',
-          color: { color: '#666666', highlight: '#0066cc' },
-          font: { size: 9, color: '#aaaaaa', strokeWidth: 0 }
-        });
-      });
-
-      const container = document.getElementById('network');
-      const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
-      
-      // Determine if extreme scale mode is needed
-      const isLarge = nodes.length > 200;
-
-      const options = {
-        physics: isLarge 
-          ? { enabled: false } 
-          : { enabled: true, stabilization: { iterations: 200 } },
-        layout: isLarge 
-          ? { improvedLayout: false, randomSeed: 42 } 
-          : {},
-        interaction: { 
-          navigationButtons: true, 
-          keyboard: false, 
-          hideEdgesOnDrag: isLarge, 
-          hideEdgesOnZoom: isLarge 
-        },
-        edges: { smooth: !isLarge },
-        nodes: { shadow: !isLarge }
-      };
-
-      network = new vis.Network(container, data, options);
-    }
-
     function populateEntityList(erd) {
       const list = document.getElementById('entityList');
-      list.innerHTML = '<h3>Tables (' + Object.keys(erd.entities).length + ')</h3>';
+      list.innerHTML = '';
+      tableDOMNodes = [];
 
-      Object.entries(erd.entities).forEach(([name, entity]) => {
+      // Sort alphabetically
+      const sortedKeys = Object.keys(erd.entities).sort();
+
+      sortedKeys.forEach(name => {
+        const entity = erd.entities[name];
         const div = document.createElement('div');
         div.className = 'entity-item';
-        // Add left border color matching the node color
+        
         const c = getTableColor(name);
         div.style.borderLeftColor = c.bg;
         
         div.innerHTML = \`
-          <h4>\${entity.label || name}</h4>
-          <p>\${name}</p>
-          <p>\${entity.fields.length} fields</p>
+          <h4>\${name}</h4>
+          <p>\${entity.label || 'No Label'} • \${entity.fields.length} cols</p>
         \`;
-        div.onclick = () => network && network.focus(name, { scale: 1.5, animation: true });
+        
+        div.onclick = () => selectAndRenderTable(name, div);
+        
         list.appendChild(div);
+        tableDOMNodes.push({ name: name, label: (entity.label || '').toLowerCase(), element: div });
       });
+    }
+
+    function filterTables() {
+      const q = document.getElementById('tableSearch').value.toLowerCase();
+      tableDOMNodes.forEach(item => {
+        if (item.name.toLowerCase().includes(q) || item.label.includes(q)) {
+          item.element.style.display = 'block';
+        } else {
+          item.element.style.display = 'none';
+        }
+      });
+    }
+
+    // Contextual Rendering: Only render the selected node and its direct neighbors
+    function selectAndRenderTable(targetTableName, clickedElement) {
+      // Handle UI highlighting
+      document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
+      if (clickedElement) clickedElement.classList.add('active');
+
+      openDetailPanel(targetTableName);
+
+      const nodes = new vis.DataSet();
+      const edges = new vis.DataSet();
+      const addedNodes = new Set();
+
+      // Helper to add a node if it doesn't exist yet
+      function addNode(tableName, isCenter = false) {
+        if (addedNodes.has(tableName)) return;
+        const entity = currentERD.entities[tableName];
+        if (!entity) return; // Table might not be in our dataset
+        
+        const c = getTableColor(tableName);
+        nodes.add({
+          id: tableName,
+          label: tableName,
+          title: entity.label || tableName,
+          color: { background: c.bg, border: c.border },
+          font: { color: 'white', size: isCenter ? 16 : 12 },
+          shape: 'box',
+          margin: 10,
+          borderWidth: isCenter ? 3 : 1,
+          shadow: true
+        });
+        addedNodes.add(tableName);
+      }
+
+      // Add the center node
+      addNode(targetTableName, true);
+
+      // Find all relationships involving this table
+      currentERD.relationships.forEach(rel => {
+        if (rel.from === targetTableName) {
+          addNode(rel.to);
+          edges.add({
+            from: rel.from,
+            to: rel.to,
+            label: rel.field,
+            arrows: 'to',
+            color: { color: '#888', highlight: '#00aaff' },
+            font: { size: 10, color: '#aaa', strokeWidth: 0 }
+          });
+        } else if (rel.to === targetTableName) {
+          addNode(rel.from);
+          edges.add({
+            from: rel.from,
+            to: rel.to,
+            label: rel.field,
+            arrows: 'to',
+            color: { color: '#888', highlight: '#00aaff' },
+            font: { size: 10, color: '#aaa', strokeWidth: 0 }
+          });
+        }
+      });
+
+      const container = document.getElementById('network');
+      const options = {
+        physics: {
+          enabled: true,
+          barnesHut: { gravitationalConstant: -2000, centralGravity: 0.3, springLength: 150 }
+        },
+        interaction: { hover: true, tooltipDelay: 200 }
+      };
+
+      if (network) { network.destroy(); }
+      network = new vis.Network(container, { nodes, edges }, options);
+    }
+
+    function openDetailPanel(tableName) {
+      const panel = document.getElementById('detailPanel');
+      document.getElementById('dp-table-name').innerText = tableName;
+      
+      const entity = currentERD.entities[tableName];
+      document.getElementById('dp-fields-count').innerText = \`\${entity ? entity.fields.length : 0} defined dictionary fields\`;
+      
+      document.getElementById('dp-loading').style.display = 'none';
+      document.getElementById('dp-content').style.display = 'block';
+      panel.classList.add('open');
+    }
+
+    function closeDetailPanel() {
+      document.getElementById('detailPanel').classList.remove('open');
+      document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
     }
   </script>
 </body>
