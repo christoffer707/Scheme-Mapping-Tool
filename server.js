@@ -77,15 +77,15 @@ function getHTMLPage() {
     .sidebar-header { padding: 20px; border-bottom: 1px solid #ddd; }
     .controls { padding: 20px; border-bottom: 1px solid #ddd; background: #f9f9f9; }
     .table-search-container { padding: 15px; border-bottom: 1px solid #ddd; background: #fff; }
-    .entity-list { flex: 1; overflow-y: auto; padding: 10px; }
+    .entity-list { flex: 1; overflow-y: auto; padding: 10px; scroll-behavior: smooth; }
     
     /* Main Canvas */
     .main { flex: 1; position: relative; background: #1a1a2e; display: flex; }
     #network { flex: 1; height: 100%; }
-    .canvas-overlay { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.75); padding: 12px 18px; border-radius: 8px; font-size: 13px; z-index: 5; pointer-events: none; line-height: 1.5; border: 1px solid rgba(255,255,255,0.1); }
     
-    /* Back Button */
-    #btn-back-macro { display: none; position: absolute; top: 20px; right: 480px; z-index: 100; padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; background: #1a7a4a; color: white; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.4); transition: background 0.2s; }
+    /* Top Left Overlay */
+    .canvas-overlay { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.75); padding: 12px 18px; border-radius: 8px; font-size: 13px; z-index: 5; pointer-events: auto; line-height: 1.5; border: 1px solid rgba(255,255,255,0.1); max-width: 320px; }
+    #btn-back-macro { display: none; margin-top: 12px; padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; background: #1a7a4a; color: white; border: none; cursor: pointer; transition: background 0.2s; width: 100%; text-align: center; }
     #btn-back-macro:hover { background: #155f3a; }
 
     /* Detail Panel */
@@ -114,6 +114,8 @@ function getHTMLPage() {
     input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
     button { background: #0066cc; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; width: 100%; margin-bottom: 8px; }
     button:hover { background: #0052a3; }
+    button.btn-secondary { background: #444; }
+    button.btn-secondary:hover { background: #222; }
     
     .entity-item { padding: 10px; background: #fff; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; cursor: pointer; border-left: 4px solid #0066cc; }
     .entity-item:hover { background: #f0f7ff; }
@@ -148,6 +150,7 @@ function getHTMLPage() {
 
       <div class="table-search-container" id="search-container" style="display:none;">
         <input type="text" id="tableSearch" placeholder="Search tables (e.g., incident)..." onkeyup="filterTables()">
+        <button class="btn-secondary" style="margin-top: 10px; font-size: 11px; padding: 6px;" onclick="renderMacroGraph(false)">Show All Relationships (Macro View)</button>
         <div style="font-size: 11px; color: #888; margin-top: 6px;" id="table-count-label"></div>
       </div>
 
@@ -155,8 +158,10 @@ function getHTMLPage() {
     </div>
 
     <div class="main">
-      <div class="canvas-overlay" id="canvas-status">Waiting for connection...</div>
-      <button id="btn-back-macro" onclick="resetToMacroView()">&#8592; Back to Full Instance View</button>
+      <div class="canvas-overlay">
+        <div id="canvas-status">Waiting for connection...</div>
+        <button id="btn-back-macro" onclick="resetToMacroView()">&#8592; Back to Full Instance View</button>
+      </div>
       <div id="network"></div>
       
       <div class="detail-panel" id="detailPanel">
@@ -237,7 +242,7 @@ function getHTMLPage() {
         document.getElementById('table-count-label').innerText = \`\${Object.keys(currentERD.entities).length} tables loaded\`;
         
         populateEntityList(currentERD);
-        resetToMacroView(); // Draws the initial galaxy without relationships
+        resetToMacroView();
       } catch (error) {
         messageDiv.innerHTML = \`<div class="alert error">\${error.message}</div>\`;
         document.getElementById('canvas-status').innerText = 'Error loading schema.';
@@ -296,12 +301,12 @@ function getHTMLPage() {
 
       const initialStatusHTML = \`
         <strong style="font-size:15px;color:#4da6ff;">Schema Successfully Loaded!</strong><br>
-        <div style="margin-top:6px;margin-bottom:6px;display:flex;gap:12px;">
+        <div style="margin-top:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:4px;">
           <span><span style="color:#2ecc71;">■</span> Custom: \${customCount}</span>
           <span><span style="color:#b366ff;">■</span> Core: \${coreCount}</span>
           <span><span style="color:#3399ff;">■</span> Platform: \${stdCount}</span>
         </div>
-        <span style="color:#aaa;">Search & click a table in the sidebar to map its relationships.</span>
+        <span style="color:#aaa;">Search & click a table to map its relationships.</span>
       \`;
 
       document.getElementById('canvas-status').innerHTML = initialStatusHTML;
@@ -328,6 +333,9 @@ function getHTMLPage() {
         interaction: { hideEdgesOnDrag: true, hideEdgesOnZoom: true, dragNodes: false }
       });
       network.fit();
+      
+      // Bind click event to nodes on the canvas
+      bindCanvasClick();
     }
 
     // Contextual Graphing - Highlights lines intensely
@@ -366,7 +374,6 @@ function getHTMLPage() {
           addNode(rel.from === targetTableName ? rel.to : rel.from);
           edges.add({
             from: rel.from, to: rel.to, label: rel.field, arrows: 'to',
-            // Made lines thick, bright blue, and pronounced
             color: { color: '#00aaff', highlight: '#ff9900' }, width: 2,
             font: { size: 11, color: '#111', background: '#ffffff', strokeWidth: 0, align: 'middle' },
             smooth: { type: 'curvedCW', roundness: 0.15 } 
@@ -393,6 +400,61 @@ function getHTMLPage() {
         network.setOptions({ physics: { enabled: false } }); 
         document.getElementById('canvas-status').innerHTML = \`Viewing dependencies for: <strong style="color:#4da6ff;">\${targetTableName}</strong><br><span style="color:#aaa;">(\${edgeCount} relationships mapped)</span>\`;
         network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+      });
+      
+      // Bind click event to nodes on the canvas
+      bindCanvasClick();
+    }
+
+    function renderMacroGraph(hideEdges = false) {
+      document.getElementById('btn-back-macro').style.display = 'block';
+      document.getElementById('canvas-status').innerText = hideEdges 
+        ? 'Rendering instance overview...' 
+        : 'Rendering entire instance schema... WARNING: Rendering 10k+ relationship lines will cause severe lag.';
+
+      const nodes = new vis.DataSet();
+      const edges = new vis.DataSet();
+      
+      Object.keys(currentERD.entities).forEach(name => {
+        const c = getTableColor(name);
+        nodes.add({
+          id: name, label: name,
+          color: { background: c.bg, border: c.border }, font: { color: 'white', size: 10 },
+          shape: 'box', margin: 6
+        });
+      });
+
+      if (!hideEdges) {
+        currentERD.relationships.forEach(rel => {
+          if (currentERD.entities[rel.from] && currentERD.entities[rel.to]) {
+            edges.add({ from: rel.from, to: rel.to, arrows: 'to', color: { color: 'rgba(136,136,136,0.3)' }, smooth: false });
+          }
+        });
+      }
+
+      if (network) network.destroy();
+      network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
+        physics: { enabled: false }, 
+        layout: { improvedLayout: false },
+        interaction: { hideEdgesOnDrag: true, hideEdgesOnZoom: true }
+      });
+      
+      bindCanvasClick();
+    }
+
+    // Handles clicking nodes directly on the vis.js canvas
+    function bindCanvasClick() {
+      if (!network) return;
+      network.on("click", function (params) {
+        if (params.nodes.length > 0) {
+          const clickedNodeId = params.nodes[0];
+          const sidebarItem = tableDOMNodes.find(item => item.name === clickedNodeId)?.element;
+          selectAndRenderTable(clickedNodeId, sidebarItem);
+          
+          if (sidebarItem) {
+            sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
       });
     }
 
