@@ -133,7 +133,7 @@
       border: 1px solid #333;
       border-radius: 8px;
       background: #1a1a2e;
-      height: 500px;
+      height: 600px;
       position: relative;
       overflow: hidden;
     }
@@ -197,6 +197,18 @@
       user-select: none;
     }
     .erd-toggle-label input[type="checkbox"] { cursor: pointer; }
+
+    /* ── Large-graph notice ───────────────────────────────────────────── */
+    .erd-large-notice {
+      font-size: 11px;
+      color: #856404;
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 4px;
+      padding: 3px 8px;
+      display: none;
+    }
+    .erd-large-notice.visible { display: inline-block; }
 
     /* ── Table list ───────────────────────────────────────────────────── */
     .table-list {
@@ -453,8 +465,10 @@
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Extended (x_*)</div>
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#888888;"></div>Core</div>
             </div>
+            <span class="erd-large-notice" id="erd-large-notice-inst1">⚡ Large graph — physics disabled for performance</span>
           </div>
         </div>
+
         <div class="erd-container" id="erd-inst1">
           <div class="erd-placeholder" id="erd-ph-inst1">
             <div class="ph-icon">🗄️</div>
@@ -529,8 +543,10 @@
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Extended (x_*)</div>
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#888888;"></div>Core</div>
             </div>
+            <span class="erd-large-notice" id="erd-large-notice-inst2">⚡ Large graph — physics disabled for performance</span>
           </div>
         </div>
+
         <div class="erd-container" id="erd-inst2">
           <div class="erd-placeholder" id="erd-ph-inst2">
             <div class="ph-icon">🗄️</div>
