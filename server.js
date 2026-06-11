@@ -1,10 +1,12 @@
 import express from 'express';
 import cors from 'cors';
-import axios from 'axios';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import comparisonRouter from './routes/comparison.js';
 import liveComparisonRouter from './routes/liveComparison.js';
+
+// Import the optimized, uncapped schema fetcher we built
+import { fetchServiceNowSchema } from './utils/servicenowAPI.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -25,89 +27,6 @@ app.use('/api/live', liveComparisonRouter);
 // ServiceNow schema cache
 let schemaCache = null;
 
-// Fetch all tables from ServiceNow instance
-async function fetchServiceNowSchema(instance, username, password) {
-  const auth = Buffer.from(`${username}:${password}`).toString('base64');
-  const baseUrl = `https://${instance}.service-now.com/api/now/table/sys_db_object`;
-
-  try {
-    const response = await axios.get(baseUrl, {
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Accept': 'application/json'
-      },
-      params: {
-        sysparm_limit: 1000,
-        sysparm_fields: 'name,label,sys_id'
-      }
-    });
-
-    return response.data.result || [];
-  } catch (error) {
-    throw new Error(`Failed to fetch ServiceNow schema: ${error.message}`);
-  }
-}
-
-// Fetch fields for a specific table
-async function fetchTableFields(instance, username, password, tableName) {
-  const auth = Buffer.from(`${username}:${password}`).toString('base64');
-  const baseUrl = `https://${instance}.service-now.com/api/now/table/sys_dictionary`;
-
-  try {
-    const response = await axios.get(baseUrl, {
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Accept': 'application/json'
-      },
-      params: {
-        sysparm_query: `name=${tableName}`,
-        sysparm_limit: 500,
-        sysparm_fields: 'element,label,internal_type,reference,mandatory'
-      }
-    });
-
-    return response.data.result || [];
-  } catch (error) {
-    throw new Error(`Failed to fetch fields for ${tableName}: ${error.message}`);
-  }
-}
-
-// Generate ERD JSON from schema
-function generateERD(tables, fields) {
-  const entities = {};
-  const relationships = [];
-
-  tables.forEach(table => {
-    const tableFields = fields[table.name] || [];
-    entities[table.name] = {
-      id: table.sys_id,
-      name: table.name,
-      label: table.label,
-      fields: tableFields.map(field => ({
-        name: field.element,
-        label: field.label,
-        type: field.internal_type,
-        reference: field.reference,
-        mandatory: field.mandatory === '1'
-      }))
-    };
-
-    // Track relationships
-    tableFields.forEach(field => {
-      if (field.reference && field.reference !== table.name) {
-        relationships.push({
-          from: table.name,
-          to: field.reference,
-          field: field.element,
-          type: 'foreign_key'
-        });
-      }
-    });
-  });
-
-  return { entities, relationships };
-}
-
 // API endpoint to generate ERD
 app.post('/api/erd/generate', async (req, res) => {
   try {
@@ -117,22 +36,26 @@ app.post('/api/erd/generate', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: instance, username, password' });
     }
 
-    // Fetch all tables
-    const tables = await fetchServiceNowSchema(instance, username, password);
+    // Use the robust utility function to fetch everything without limits
+    const schema = await fetchServiceNowSchema(instance, username, password, { includeCore: true });
 
-    // Fetch fields for each table
-    const fieldsMap = {};
-    for (const table of tables.slice(0, 50)) { // Limit to first 50 for demo
-      fieldsMap[table.name] = await fetchTableFields(instance, username, password, table.name);
-    }
+    // Map the robust schema output to the specific ERD format expected by this frontend
+    const entities = {};
+    schema.tables.forEach(t => {
+      entities[t.name] = {
+        id: t.sys_id,
+        name: t.name,
+        label: t.label,
+        fields: schema.columns[t.name] || []
+      };
+    });
 
-    // Generate ERD
-    const erd = generateERD(tables.slice(0, 50), fieldsMap);
+    const erd = { entities, relationships: schema.relationships };
     schemaCache = erd;
 
     res.json({
       success: true,
-      message: `Generated ERD for ${tables.length} tables`,
+      message: `Successfully generated ERD for ${schema.tables.length} tables`,
       erd
     });
   } catch (error) {
@@ -176,10 +99,11 @@ function getHTMLPage() {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
     .container { display: flex; height: 100vh; }
-    .sidebar { width: 350px; background: white; border-right: 1px solid #ddd; overflow-y: auto; padding: 20px; }
+    .sidebar { width: 350px; background: white; border-right: 1px solid #ddd; overflow-y: auto; padding: 20px; z-index: 10; }
     .main { flex: 1; display: flex; flex-direction: column; }
     .controls { background: white; padding: 20px; border-bottom: 1px solid #ddd; }
-    #network { flex: 1; background: white; }
+    /* Switched background to a sleek dark tone for better contrast */
+    #network { flex: 1; background: #1a1a2e; } 
     .form-group { margin-bottom: 15px; }
     label { display: block; font-weight: 600; margin-bottom: 5px; font-size: 14px; }
     input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
@@ -190,17 +114,18 @@ function getHTMLPage() {
     .entity-item:hover { background: #f0f0f0; }
     .entity-item h4 { font-size: 13px; margin-bottom: 3px; }
     .entity-item p { font-size: 12px; color: #666; }
-    .loading { text-align: center; padding: 20px; color: #666; }
-    .error { color: #d32f2f; padding: 10px; background: #ffebee; border-radius: 4px; margin-bottom: 10px; }
-    .success { color: #388e3c; padding: 10px; background: #e8f5e9; border-radius: 4px; margin-bottom: 10px; }
+    #message { margin-bottom: 15px; }
+    .loading { text-align: center; padding: 10px; color: #666; background: #e2e3e5; border-radius: 4px; }
+    .error { color: #d32f2f; padding: 10px; background: #ffebee; border-radius: 4px; }
+    .success { color: #388e3c; padding: 10px; background: #e8f5e9; border-radius: 4px; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="sidebar">
       <h2>ServiceNow ERD Visualizer</h2>
-      <div style="margin-bottom:6px;padding:8px;background:#f0f7ff;border-radius:4px;"><a href="/comparison" style="color:#0066cc;font-size:13px;font-weight:600;">&#8644; Compare &amp; Analyze Instances &rarr;</a></div>
-      <div style="margin-bottom:12px;padding:8px;background:#f0fff4;border-radius:4px;"><a href="/live-compare" style="color:#1a7a4a;font-size:13px;font-weight:600;">&#9889; Live Dual-Instance Compare &rarr;</a></div>
+      <div style="margin-bottom:6px;margin-top:12px;padding:8px;background:#f0f7ff;border-radius:4px;"><a href="/comparison" style="color:#0066cc;font-size:13px;font-weight:600;text-decoration:none;">&#8644; Compare &amp; Analyze Instances &rarr;</a></div>
+      <div style="margin-bottom:12px;padding:8px;background:#f0fff4;border-radius:4px;"><a href="/live-compare" style="color:#1a7a4a;font-size:13px;font-weight:600;text-decoration:none;">&#9889; Live Dual-Instance Compare &rarr;</a></div>
       <div class="controls">
         <div id="message"></div>
         <div class="form-group">
@@ -215,7 +140,7 @@ function getHTMLPage() {
           <label>Password</label>
           <input type="password" id="password" placeholder="ServiceNow password">
         </div>
-        <button onclick="generateERD()">Generate ERD</button>
+        <button onclick="generateERD()">Generate Full ERD</button>
       </div>
       <div class="entity-list" id="entityList"></div>
     </div>
@@ -239,7 +164,7 @@ function getHTMLPage() {
         return;
       }
 
-      messageDiv.innerHTML = '<div class="loading">Generating ERD...</div>';
+      messageDiv.innerHTML = '<div class="loading">Fetching entire schema...</div>';
 
       try {
         const response = await fetch('/api/erd/generate', {
@@ -263,18 +188,33 @@ function getHTMLPage() {
       }
     }
 
+    // Helper to determine color based on table prefix
+    function getTableColor(tableName) {
+      if (tableName.startsWith('u_') || tableName.startsWith('x_')) return { bg: '#1a7a4a', border: '#155f3a' };
+      if (
+        tableName.startsWith('sys_') || 
+        tableName.startsWith('cmdb_') || 
+        tableName.startsWith('sn_') || 
+        ['incident', 'change_request', 'problem', 'request', 'sc_req_item', 'task'].includes(tableName)
+      ) return { bg: '#7c3aed', border: '#6d28d9' };
+      return { bg: '#0066cc', border: '#003d99' };
+    }
+
     function visualizeERD(erd) {
       const nodes = [];
       const edges = [];
 
-      // Create nodes for each entity
+      // Create nodes for each entity with color coding
       Object.entries(erd.entities).forEach(([name, entity], index) => {
+        const c = getTableColor(name);
         nodes.push({
           id: name,
           label: entity.label || name,
-          title: \`Table: \${name}\nFields: \${entity.fields.length}\`,
-          color: { background: '#0066cc', border: '#003d99', highlight: { background: '#0052a3' } },
-          font: { color: 'white', size: 14 }
+          title: \`Table: \${name}\\nFields: \${entity.fields.length}\`,
+          color: { background: c.bg, border: c.border, highlight: { background: c.bg, border: c.border } },
+          font: { color: 'white', size: 13 },
+          shape: 'box',
+          margin: 8
         });
       });
 
@@ -285,16 +225,32 @@ function getHTMLPage() {
           to: rel.to,
           label: rel.field,
           arrows: 'to',
-          color: { color: '#999', highlight: '#0066cc' },
-          font: { size: 12 }
+          color: { color: '#666666', highlight: '#0066cc' },
+          font: { size: 9, color: '#aaaaaa', strokeWidth: 0 }
         });
       });
 
       const container = document.getElementById('network');
       const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+      
+      // Determine if extreme scale mode is needed
+      const isLarge = nodes.length > 200;
+
       const options = {
-        physics: { enabled: true, stabilization: { iterations: 200 } },
-        interaction: { navigationButtons: true, keyboard: true }
+        physics: isLarge 
+          ? { enabled: false } 
+          : { enabled: true, stabilization: { iterations: 200 } },
+        layout: isLarge 
+          ? { improvedLayout: false, randomSeed: 42 } 
+          : {},
+        interaction: { 
+          navigationButtons: true, 
+          keyboard: false, 
+          hideEdgesOnDrag: isLarge, 
+          hideEdgesOnZoom: isLarge 
+        },
+        edges: { smooth: !isLarge },
+        nodes: { shadow: !isLarge }
       };
 
       network = new vis.Network(container, data, options);
@@ -307,6 +263,10 @@ function getHTMLPage() {
       Object.entries(erd.entities).forEach(([name, entity]) => {
         const div = document.createElement('div');
         div.className = 'entity-item';
+        // Add left border color matching the node color
+        const c = getTableColor(name);
+        div.style.borderLeftColor = c.bg;
+        
         div.innerHTML = \`
           <h4>\${entity.label || name}</h4>
           <p>\${name}</p>
