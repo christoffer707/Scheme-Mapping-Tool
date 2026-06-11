@@ -89,7 +89,6 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   const url = normaliseInstanceUrl(instanceUrl);
   const client = buildClient(url, username, password);
   
-  // MODIFIED: Merged conflict branch and defaulted to Infinity to ensure no tables are dropped.
   const tableLimit  = opts.tableLimit  ?? Infinity;
   const includeCore = opts.includeCore ?? false;
 
@@ -140,7 +139,7 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   let dictRaw = [];
   if (tableNames.length > 0) {
     try {
-      // MODIFIED: Reduced table chunk size to 50 for safer URI string lengths on giant schemas, 
+      // Reduced table chunk size to 50 for safer URI string lengths on giant schemas, 
       // and introduced a paginated while-loop per chunk to prevent column truncation.
       const chunks = chunkArray(tableNames, 50);
       const DICT_PAGE_SIZE = 10_000;
@@ -261,3 +260,24 @@ export async function fetchServiceNowTableData(instanceUrl, username, password, 
 
   try {
     const res = await client.get(`/api/now/table/${tableName}`, { params });
+    const rows = res.data.result || [];
+    return { rows, table: tableName, count: rows.length };
+  } catch (err) {
+    const status = err.response?.status;
+    if (status === 401 || status === 403) throw new Error('Authentication failed — check username and password.');
+    if (status === 404) throw new Error(`Table "${tableName}" not found on this instance.`);
+    throw new Error(`Failed to fetch data from ${tableName}: ${err.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+function chunkArray(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
