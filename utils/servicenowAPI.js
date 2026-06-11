@@ -72,43 +72,59 @@ export async function testServiceNowConnection(instanceUrl, username, password) 
 /**
  * Fetch the full schema (tables + columns + relationships) from a live instance.
  *
+ * Strategy:
+ *  - Always fetch ALL tables from the instance (no server-side prefix filter) so we
+ *    can report the true total count and let the client apply display filters.
+ *  - `tables`     — filtered/limited set used for ERD display (u_* / x_* by default)
+ *  - `raw_tables` — every table returned by the instance (up to a generous hard cap)
+ *
  * @param {string} instanceUrl
  * @param {string} username
  * @param {string} password
  * @param {{ tableLimit?: number, includeCore?: boolean }} [opts]
- * @returns {{ tables: object[], columns: object, relationships: object[], raw_tables: object[] }}
+ * @returns {{ tables: object[], columns: object, relationships: object[], raw_tables: object[],
+ *             total_tables: number, filtered_tables: number, filter_applied: string }}
  */
 export async function fetchServiceNowSchema(instanceUrl, username, password, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
   const client = buildClient(url, username, password);
-  // Default to 100 tables max; includeCore=false means only u_* and x_* tables
+  // Display limit for the filtered (ERD-ready) table set
   const tableLimit  = opts.tableLimit  ?? 100;
   const includeCore = opts.includeCore ?? false;
 
-  // 1. Fetch table list
-  let tablesRaw;
+  // 1. Fetch ALL tables from the instance (hard cap at 2000 to stay safe)
+  let allTablesRaw;
   try {
-    // When includeCore is false, restrict to custom (u_*) and extended (x_*) tables only.
-    // When includeCore is true, also include sys_* and all other tables up to the limit.
-    const sysparm_query = includeCore
-      ? 'nameSTARTSWITHsys^ORnameSTARTSWITHu_^ORnameSTARTSWITHx_'
-      : 'nameSTARTSWITHu_^ORnameSTARTSWITHx_';
-
     const res = await client.get('/api/now/table/sys_db_object', {
       params: {
-        sysparm_limit: tableLimit,
+        sysparm_limit: 2000,
         sysparm_fields: 'name,label,sys_id,super_class',
-        sysparm_query,
+        sysparm_orderby: 'name',
       },
     });
-    tablesRaw = res.data.result || [];
+    allTablesRaw = res.data.result || [];
   } catch (err) {
     const status = err.response?.status;
     if (status === 401 || status === 403) throw new Error('Authentication failed — check username and password.');
     throw new Error(`Failed to fetch table list: ${err.message}`);
   }
 
-  // 2. Fetch dictionary entries (columns) for all fetched tables in one call
+  // 2. Apply display filter to produce the working table set
+  let filterApplied;
+  let tablesRaw;
+  if (includeCore) {
+    // "All tables" mode — include everything up to the display limit
+    filterApplied = 'all';
+    tablesRaw = allTablesRaw.slice(0, tableLimit);
+  } else {
+    // Default: user-created (u_*) and custom-scoped (x_*) tables only
+    filterApplied = 'user_custom';
+    tablesRaw = allTablesRaw
+      .filter(t => t.name.startsWith('u_') || t.name.startsWith('x_'))
+      .slice(0, tableLimit);
+  }
+
+  // 3. Fetch dictionary entries (columns) for all fetched tables in one call
   const tableNames = tablesRaw.map(t => t.name);
   let dictRaw = [];
   if (tableNames.length > 0) {
@@ -131,7 +147,7 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
     }
   }
 
-  // 3. Group columns by table
+  // 4. Group columns by table
   const columnsByTable = {};
   for (const col of dictRaw) {
     if (!col.element) continue; // skip table-level entries
@@ -147,7 +163,7 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
     });
   }
 
-  // 4. Build relationships list — only include edges where both ends are in the fetched set
+  // 5. Build relationships list — only include edges where both ends are in the fetched set
   const tableNameSet = new Set(tablesRaw.map(t => t.name));
   const relationships = [];
   for (const [tableName, cols] of Object.entries(columnsByTable)) {
@@ -167,7 +183,7 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
     }
   }
 
-  // 5. Build normalised tables array
+  // 6. Build normalised tables array
   const tables = tablesRaw.map(t => ({
     name: t.name,
     label: t.label || t.name,
@@ -176,11 +192,23 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
     column_count: (columnsByTable[t.name] || []).length,
   }));
 
+  // Build a lightweight raw_tables list (name + label only) for all tables
+  // so the client can apply its own filters without re-fetching.
+  const rawTablesNormalised = allTablesRaw.map(t => ({
+    name: t.name,
+    label: t.label || t.name,
+    sys_id: t.sys_id,
+    super_class: t.super_class?.value || t.super_class || null,
+  }));
+
   return {
     tables,
     columns: columnsByTable,
     relationships,
-    raw_tables: tablesRaw,
+    raw_tables: rawTablesNormalised,
+    total_tables:    allTablesRaw.length,
+    filtered_tables: tables.length,
+    filter_applied:  filterApplied,
     fetched_at: new Date().toISOString(),
   };
 }
