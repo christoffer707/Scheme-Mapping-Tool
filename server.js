@@ -30,7 +30,13 @@ app.post('/api/erd/generate', async (req, res) => {
 
     const entities = {};
     schema.tables.forEach(t => {
-      entities[t.name] = { id: t.sys_id, name: t.name, label: t.label, fields: schema.columns[t.name] || [] };
+      entities[t.name] = { 
+        id: t.sys_id, 
+        name: t.name, 
+        label: t.label, 
+        super_class: t.super_class, // Now piping extension data to the UI
+        fields: schema.columns[t.name] || [] 
+      };
     });
 
     schemaCache = { entities, relationships: schema.relationships };
@@ -249,18 +255,21 @@ function getHTMLPage() {
       }
     }
 
-    function getTableType(tableName) {
+    // Extended getTableType to include 'extended' logic
+    function getTableType(tableName, entity) {
       if (tableName.startsWith('u_') || tableName.startsWith('x_')) return 'custom';
+      if (entity && entity.super_class) return 'extended'; // Returns orange if it extends a table
       if (tableName.startsWith('sys_') || tableName.startsWith('cmdb_') || tableName.startsWith('sn_') || 
           ['incident', 'change_request', 'problem', 'request', 'sc_req_item', 'task'].includes(tableName)) return 'core';
       return 'standard';
     }
 
-    function getTableColor(tableName) {
-      const type = getTableType(tableName);
-      if (type === 'custom') return { bg: '#1a7a4a', border: '#155f3a' };
-      if (type === 'core') return { bg: '#7c3aed', border: '#6d28d9' };
-      return { bg: '#0066cc', border: '#003d99' };
+    function getTableColor(tableName, entity) {
+      const type = getTableType(tableName, entity);
+      if (type === 'custom') return { bg: '#1a7a4a', border: '#155f3a' };     // Green
+      if (type === 'extended') return { bg: '#e67e22', border: '#b9661a' };  // Orange
+      if (type === 'core') return { bg: '#7c3aed', border: '#6d28d9' };      // Purple
+      return { bg: '#0066cc', border: '#003d99' };                           // Blue
     }
 
     function populateEntityList(erd) {
@@ -272,7 +281,7 @@ function getHTMLPage() {
         const entity = erd.entities[name];
         const div = document.createElement('div');
         div.className = 'entity-item';
-        div.style.borderLeftColor = getTableColor(name).bg;
+        div.style.borderLeftColor = getTableColor(name, entity).bg;
         div.innerHTML = \`<h4>\${name}</h4><p>\${entity.label || 'No Label'}</p>\`;
         div.onclick = () => selectAndRenderTable(name, div);
         list.appendChild(div);
@@ -291,10 +300,11 @@ function getHTMLPage() {
       closeDetailPanel();
       document.getElementById('btn-back-macro').style.display = 'none';
 
-      let customCount = 0, coreCount = 0, stdCount = 0;
+      let customCount = 0, extCount = 0, coreCount = 0, stdCount = 0;
       Object.keys(currentERD.entities).forEach(name => {
-         const type = getTableType(name);
+         const type = getTableType(name, currentERD.entities[name]);
          if(type === 'custom') customCount++;
+         else if(type === 'extended') extCount++;
          else if(type === 'core') coreCount++;
          else stdCount++;
       });
@@ -303,8 +313,9 @@ function getHTMLPage() {
         <strong style="font-size:15px;color:#4da6ff;">Schema Successfully Loaded!</strong><br>
         <div style="margin-top:6px;margin-bottom:6px;display:flex;flex-direction:column;gap:4px;">
           <span><span style="color:#2ecc71;">■</span> Custom: \${customCount}</span>
+          <span><span style="color:#e67e22;">■</span> Extended: \${extCount}</span>
           <span><span style="color:#b366ff;">■</span> Core: \${coreCount}</span>
-          <span><span style="color:#3399ff;">■</span> Platform: \${stdCount}</span>
+          <span><span style="color:#3399ff;">■</span> Base/Standard: \${stdCount}</span>
         </div>
         <span style="color:#aaa;">Search & click a table to map its relationships.</span>
       \`;
@@ -316,7 +327,8 @@ function getHTMLPage() {
       const goldenAngle = 137.508 * (Math.PI / 180);
       
       tableNames.forEach((name, index) => {
-        const c = getTableColor(name);
+        const entity = currentERD.entities[name];
+        const c = getTableColor(name, entity);
         const r = 30 * Math.sqrt(index);
         const theta = index * goldenAngle;
 
@@ -334,11 +346,9 @@ function getHTMLPage() {
       });
       network.fit();
       
-      // Bind click event to nodes on the canvas
       bindCanvasClick();
     }
 
-    // Contextual Graphing - Highlights lines intensely
     function selectAndRenderTable(targetTableName, clickedElement) {
       document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
       if (clickedElement) clickedElement.classList.add('active');
@@ -357,7 +367,7 @@ function getHTMLPage() {
         const entity = currentERD.entities[tableName];
         if (!entity) return; 
         
-        const c = getTableColor(tableName);
+        const c = getTableColor(tableName, entity);
         nodes.add({
           id: tableName, label: tableName, title: entity.label,
           color: { background: c.bg, border: c.border },
@@ -402,7 +412,6 @@ function getHTMLPage() {
         network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
       });
       
-      // Bind click event to nodes on the canvas
       bindCanvasClick();
     }
 
@@ -416,7 +425,8 @@ function getHTMLPage() {
       const edges = new vis.DataSet();
       
       Object.keys(currentERD.entities).forEach(name => {
-        const c = getTableColor(name);
+        const entity = currentERD.entities[name];
+        const c = getTableColor(name, entity);
         nodes.add({
           id: name, label: name,
           color: { background: c.bg, border: c.border }, font: { color: 'white', size: 10 },
@@ -442,7 +452,6 @@ function getHTMLPage() {
       bindCanvasClick();
     }
 
-    // Handles clicking nodes directly on the vis.js canvas
     function bindCanvasClick() {
       if (!network) return;
       network.on("click", function (params) {
@@ -483,7 +492,6 @@ function getHTMLPage() {
       document.getElementById('dp-loading').style.display = 'none';
       document.getElementById('dp-content').style.display = 'block';
 
-      // 1. Database Columns (Field Drill-Down)
       const entity = currentERD.entities[tableName];
       const fields = entity ? entity.fields : [];
       document.getElementById('dp-fields-count').innerText = fields.length;
@@ -506,7 +514,6 @@ function getHTMLPage() {
         ? '<div class="empty-state" style="padding:10px;">None found</div>' 
         : items.map(renderer).join('');
 
-      // 2. Workflows
       document.getElementById('dp-wf-count').innerText = art.workflows.length;
       document.getElementById('dp-workflows').innerHTML = buildHtml(art.workflows, wf => \`
         <div class="artifact-item" style="border-left-color: #d68910;">
@@ -517,7 +524,6 @@ function getHTMLPage() {
         </div>
       \`);
 
-      // 3. Script Includes
       document.getElementById('dp-si-count').innerText = art.scriptIncludes.length;
       document.getElementById('dp-script-includes').innerHTML = buildHtml(art.scriptIncludes, si => \`
         <div class="artifact-item" style="border-left-color: #e74c3c;">
@@ -529,7 +535,6 @@ function getHTMLPage() {
         </div>
       \`);
 
-      // 4. Business Rules
       document.getElementById('dp-br-count').innerText = art.businessRules.length;
       document.getElementById('dp-brs').innerHTML = buildHtml(art.businessRules, br => \`
         <div class="artifact-item">
@@ -544,7 +549,6 @@ function getHTMLPage() {
         </div>
       \`);
 
-      // 5. Client Scripts
       document.getElementById('dp-cs-count').innerText = art.clientScripts.length;
       document.getElementById('dp-scripts').innerHTML = buildHtml(art.clientScripts, cs => \`
         <div class="artifact-item" style="border-left-color: #1a7a4a;">
@@ -556,7 +560,6 @@ function getHTMLPage() {
         </div>
       \`);
 
-      // 6. UI Policies
       document.getElementById('dp-ui-count').innerText = art.uiPolicies.length;
       document.getElementById('dp-policies').innerHTML = buildHtml(art.uiPolicies, ui => \`
         <div class="artifact-item" style="border-left-color: #0066cc;">
