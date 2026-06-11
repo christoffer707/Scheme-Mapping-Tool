@@ -4,8 +4,6 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import comparisonRouter from './routes/comparison.js';
 import liveComparisonRouter from './routes/liveComparison.js';
-
-// Import our new artifact fetcher alongside the schema fetcher
 import { fetchServiceNowSchema, fetchServiceNowTableArtifacts } from './utils/servicenowAPI.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -22,14 +20,12 @@ app.use('/api/live', liveComparisonRouter);
 let schemaCache = null;
 let currentCredentials = null; 
 
-// 1. Generate the Base ERD
 app.post('/api/erd/generate', async (req, res) => {
   try {
     const { instance, username, password } = req.body;
     if (!instance || !username || !password) return res.status(400).json({ error: 'Missing required fields.' });
 
     const schema = await fetchServiceNowSchema(instance, username, password, { includeCore: true });
-    
     currentCredentials = { instance, username, password };
 
     const entities = {};
@@ -44,17 +40,13 @@ app.post('/api/erd/generate', async (req, res) => {
   }
 });
 
-// 2. Fetch specific table artifacts (Drill-down)
 app.post('/api/erd/table-details', async (req, res) => {
   try {
     const { table } = req.body;
     if (!table || !currentCredentials) return res.status(400).json({ error: 'Missing table or session expired.' });
 
     const artifacts = await fetchServiceNowTableArtifacts(
-      currentCredentials.instance, 
-      currentCredentials.username, 
-      currentCredentials.password, 
-      table
+      currentCredentials.instance, currentCredentials.username, currentCredentials.password, table
     );
     res.json({ success: true, artifacts });
   } catch (error) {
@@ -90,9 +82,9 @@ function getHTMLPage() {
     /* Main Canvas */
     .main { flex: 1; position: relative; background: #1a1a2e; display: flex; }
     #network { flex: 1; height: 100%; }
-    .canvas-overlay { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.6); padding: 10px 15px; border-radius: 6px; font-size: 13px; z-index: 5; pointer-events: none; }
+    .canvas-overlay { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.75); padding: 12px 18px; border-radius: 8px; font-size: 13px; z-index: 5; pointer-events: none; line-height: 1.5; border: 1px solid rgba(255,255,255,0.1); }
     
-    /* Detail Panel (Right) */
+    /* Detail Panel */
     .detail-panel { width: 450px; background: white; border-left: 1px solid #ddd; display: flex; flex-direction: column; transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: absolute; right: 0; top: 0; bottom: 0; z-index: 20; box-shadow: -4px 0 25px rgba(0,0,0,0.2); }
     .detail-panel.open { transform: translateX(0); }
     .detail-header { padding: 20px; background: #0066cc; color: white; display: flex; justify-content: space-between; align-items: center; }
@@ -110,7 +102,7 @@ function getHTMLPage() {
     .badge-inactive { background: #f8d7da; color: #721c24; }
     .badge-type { background: #e2e3e5; color: #383d41; }
 
-    /* Form Elements */
+    /* Forms & Utilities */
     .form-group { margin-bottom: 12px; }
     label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 12px; color: #555; }
     input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
@@ -119,7 +111,6 @@ function getHTMLPage() {
     button.btn-secondary { background: #444; }
     button.btn-secondary:hover { background: #222; }
     
-    /* Table Items */
     .entity-item { padding: 10px; background: #fff; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; cursor: pointer; border-left: 4px solid #0066cc; }
     .entity-item:hover { background: #f0f7ff; }
     .entity-item.active { background: #e6f2ff; border-color: #cce5ff; }
@@ -153,7 +144,7 @@ function getHTMLPage() {
 
       <div class="table-search-container" id="search-container" style="display:none;">
         <input type="text" id="tableSearch" placeholder="Search tables (e.g., incident)..." onkeyup="filterTables()">
-        <button class="btn-secondary" style="margin-top: 10px; font-size: 11px; padding: 6px;" onclick="renderMacroGraph()">Show All Relationships (Macro View)</button>
+        <button class="btn-secondary" style="margin-top: 10px; font-size: 11px; padding: 6px;" onclick="renderMacroGraph(false)">Show All Relationships (Macro View)</button>
         <div style="font-size: 11px; color: #888; margin-top: 6px;" id="table-count-label"></div>
       </div>
 
@@ -174,26 +165,11 @@ function getHTMLPage() {
         </div>
         <div class="detail-body" id="dp-body">
           <div class="empty-state" id="dp-loading">Fetching table artifacts from ServiceNow...</div>
-          
           <div id="dp-content" style="display:none;">
-            <div class="artifact-section">
-              <h4><span>Database Columns</span> <span class="badge badge-type" id="dp-fields-count">0</span></h4>
-            </div>
-
-            <div class="artifact-section">
-              <h4><span>Business Rules</span> <span class="badge badge-type" id="dp-br-count">0</span></h4>
-              <div id="dp-brs"></div>
-            </div>
-
-            <div class="artifact-section">
-              <h4><span>Client Scripts</span> <span class="badge badge-type" id="dp-cs-count">0</span></h4>
-              <div id="dp-scripts"></div>
-            </div>
-            
-            <div class="artifact-section">
-              <h4><span>UI Policies</span> <span class="badge badge-type" id="dp-ui-count">0</span></h4>
-              <div id="dp-policies"></div>
-            </div>
+            <div class="artifact-section"><h4><span>Database Columns</span> <span class="badge badge-type" id="dp-fields-count">0</span></h4></div>
+            <div class="artifact-section"><h4><span>Business Rules</span> <span class="badge badge-type" id="dp-br-count">0</span></h4><div id="dp-brs"></div></div>
+            <div class="artifact-section"><h4><span>Client Scripts</span> <span class="badge badge-type" id="dp-cs-count">0</span></h4><div id="dp-scripts"></div></div>
+            <div class="artifact-section"><h4><span>UI Policies</span> <span class="badge badge-type" id="dp-ui-count">0</span></h4><div id="dp-policies"></div></div>
           </div>
         </div>
       </div>
@@ -225,10 +201,7 @@ function getHTMLPage() {
 
         if (!response.ok) {
            let errText = await response.text();
-           try { 
-             const parsed = JSON.parse(errText); 
-             errText = parsed.error || errText; 
-           } catch(e) {}
+           try { errText = JSON.parse(errText).error || errText; } catch(e) {}
            throw new Error(errText || 'Connection Timeout or Unknown Server Error');
         }
 
@@ -238,20 +211,48 @@ function getHTMLPage() {
         
         document.getElementById('search-container').style.display = 'block';
         document.getElementById('table-count-label').innerText = \`\${Object.keys(currentERD.entities).length} tables loaded\`;
-        document.getElementById('canvas-status').innerText = 'Search and click a table in the sidebar to map its relationships.';
         
         populateEntityList(currentERD);
-        if(network) network.destroy();
-        network = new vis.Network(document.getElementById('network'), { nodes: [], edges: [] }, {});
+        
+        // Calculate Stats
+        let customCount = 0, coreCount = 0, stdCount = 0;
+        Object.keys(currentERD.entities).forEach(name => {
+           const type = getTableType(name);
+           if(type === 'custom') customCount++;
+           else if(type === 'core') coreCount++;
+           else stdCount++;
+        });
+
+        const initialStatusHTML = \`
+          <strong style="font-size:15px;color:#4da6ff;">Schema Successfully Loaded!</strong><br>
+          <div style="margin-top:6px;margin-bottom:6px;display:flex;gap:12px;">
+            <span><span style="color:#2ecc71;">■</span> Custom: \${customCount}</span>
+            <span><span style="color:#b366ff;">■</span> Core: \${coreCount}</span>
+            <span><span style="color:#3399ff;">■</span> Platform: \${stdCount}</span>
+          </div>
+          <span style="color:#aaa;">Search & click a table in the sidebar to map its relationships.</span>
+        \`;
+
+        // Render Macro view by default, but HIDE EDGES so it doesn't hairball
+        renderMacroGraph(true, initialStatusHTML);
+
       } catch (error) {
         messageDiv.innerHTML = \`<div class="alert error">\${error.message}</div>\`;
         document.getElementById('canvas-status').innerText = 'Error loading schema.';
       }
     }
 
+    function getTableType(tableName) {
+      if (tableName.startsWith('u_') || tableName.startsWith('x_')) return 'custom';
+      if (tableName.startsWith('sys_') || tableName.startsWith('cmdb_') || tableName.startsWith('sn_') || 
+          ['incident', 'change_request', 'problem', 'request', 'sc_req_item', 'task'].includes(tableName)) return 'core';
+      return 'standard';
+    }
+
     function getTableColor(tableName) {
-      if (tableName.startsWith('u_') || tableName.startsWith('x_')) return { bg: '#1a7a4a', border: '#155f3a' };
-      if (tableName.startsWith('sys_') || tableName.startsWith('cmdb_') || tableName.startsWith('sn_')) return { bg: '#7c3aed', border: '#6d28d9' };
+      const type = getTableType(tableName);
+      if (type === 'custom') return { bg: '#1a7a4a', border: '#155f3a' };
+      if (type === 'core') return { bg: '#7c3aed', border: '#6d28d9' };
       return { bg: '#0066cc', border: '#003d99' };
     }
 
@@ -284,7 +285,7 @@ function getHTMLPage() {
       document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
       if (clickedElement) clickedElement.classList.add('active');
 
-      document.getElementById('canvas-status').innerText = \`Calculating Layout for: \${targetTableName} (Please wait...)\`;
+      document.getElementById('canvas-status').innerHTML = \`Calculating Layout for: <strong style="color:#4da6ff;">\${targetTableName}</strong>...<br><span style="color:#aaa;">(Please wait...)</span>\`;
       fetchTableArtifacts(targetTableName);
 
       const nodes = new vis.DataSet();
@@ -309,14 +310,16 @@ function getHTMLPage() {
 
       addNode(targetTableName, true);
 
-      // Only map table relationships
       currentERD.relationships.forEach(rel => {
         if (rel.from === targetTableName || rel.to === targetTableName) {
           addNode(rel.from === targetTableName ? rel.to : rel.from);
           edges.add({
             from: rel.from, to: rel.to, label: rel.field, arrows: 'to',
-            color: { color: '#888', highlight: '#00aaff' }, font: { size: 10, color: '#aaa', strokeWidth: 0 },
-            smooth: false // Prevents curved lines, makes massive graphs much cleaner
+            color: { color: '#888', highlight: '#00aaff' }, 
+            // Gives the text a clean white box so they don't visually overlap the lines or background
+            font: { size: 11, color: '#111', background: '#ffffff', strokeWidth: 2, strokeColor: '#ffffff', align: 'middle' },
+            // Ensures multiple edges between the same two tables fan out instead of overlapping
+            smooth: { type: 'curvedCW', roundness: 0.2 } 
           });
           edgeCount++;
         }
@@ -329,34 +332,31 @@ function getHTMLPage() {
         physics: {
           enabled: true,
           solver: 'forceAtlas2Based',
-          forceAtlas2Based: {
-            gravitationalConstant: -100,
-            centralGravity: 0.01,
-            springConstant: 0.08,
-            springLength: 150
-          },
-          stabilization: {
-            enabled: true,
-            iterations: 150, // Does a quick 1-second math calculation to place nodes perfectly
-            updateInterval: 50
-          }
+          forceAtlas2Based: { gravitationalConstant: -100, centralGravity: 0.01, springConstant: 0.08, springLength: 150 },
+          stabilization: { enabled: true, iterations: 150, updateInterval: 50 }
         },
-        interaction: { hover: true, dragNodes: true, hideEdgesOnDrag: true },
-        edges: { smooth: false } // Straight lines
+        interaction: { hover: true, dragNodes: true, hideEdgesOnDrag: true }
       };
 
       network = new vis.Network(container, { nodes, edges }, options);
 
-      // CRITICAL FIX: The moment the 1-second layout calculation is done, freeze all movement!
       network.once('stabilizationIterationsDone', () => {
-        network.setOptions({ physics: { enabled: false } }); // Locks the nodes in place
-        document.getElementById('canvas-status').innerText = \`Viewing table dependencies for: \${targetTableName} (\${edgeCount} related tables)\`;
+        network.setOptions({ physics: { enabled: false } }); 
+        document.getElementById('canvas-status').innerHTML = \`Viewing dependencies for: <strong style="color:#4da6ff;">\${targetTableName}</strong><br><span style="color:#aaa;">(\${edgeCount} relationships mapped)</span>\`;
         network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
       });
     }
 
-    function renderMacroGraph() {
-      document.getElementById('canvas-status').innerText = 'Rendering entire instance schema (Physics Disabled for performance)...';
+    // Pass "hideEdges = true" on initial load to prevent hairball crash
+    function renderMacroGraph(hideEdges = false, customStatusHTML = null) {
+      if (customStatusHTML) {
+        document.getElementById('canvas-status').innerHTML = customStatusHTML;
+      } else {
+        document.getElementById('canvas-status').innerText = hideEdges 
+          ? 'Rendering instance overview (Lines hidden for performance)...' 
+          : 'Rendering entire instance schema... WARNING: This may cause extreme lag.';
+      }
+
       const nodes = new vis.DataSet();
       const edges = new vis.DataSet();
       
@@ -369,11 +369,13 @@ function getHTMLPage() {
         });
       });
 
-      currentERD.relationships.forEach(rel => {
-        if (currentERD.entities[rel.from] && currentERD.entities[rel.to]) {
-          edges.add({ from: rel.from, to: rel.to, arrows: 'to', color: { color: '#444' } });
-        }
-      });
+      if (!hideEdges) {
+        currentERD.relationships.forEach(rel => {
+          if (currentERD.entities[rel.from] && currentERD.entities[rel.to]) {
+            edges.add({ from: rel.from, to: rel.to, arrows: 'to', color: { color: '#444' } });
+          }
+        });
+      }
 
       if (network) network.destroy();
       network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
@@ -397,12 +399,8 @@ function getHTMLPage() {
           body: JSON.stringify({ table: tableName })
         });
         const data = await res.json();
-        
-        if(data.success) {
-           renderArtifacts(tableName, data.artifacts);
-        } else {
-           document.getElementById('dp-loading').innerHTML = '<span style="color:red">Failed to load artifacts.</span>';
-        }
+        if(data.success) renderArtifacts(tableName, data.artifacts);
+        else document.getElementById('dp-loading').innerHTML = '<span style="color:red">Failed to load artifacts.</span>';
       } catch (e) {
         document.getElementById('dp-loading').innerHTML = '<span style="color:red">Error communicating with server.</span>';
       }
