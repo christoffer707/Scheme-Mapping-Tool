@@ -22,7 +22,7 @@ function buildClient(instanceUrl, username, password) {
     baseURL: base,
     auth: { username, password },
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    timeout: 30_000,
+    timeout: 120_000,
   });
 }
 
@@ -73,36 +73,47 @@ export async function testServiceNowConnection(instanceUrl, username, password) 
  * Fetch the full schema (tables + columns + relationships) from a live instance.
  *
  * Strategy:
- *  - Always fetch ALL tables from the instance (no server-side prefix filter) so we
- *    can report the true total count and let the client apply display filters.
- *  - `tables`     — filtered/limited set used for ERD display (u_* / x_* by default)
- *  - `raw_tables` — every table returned by the instance (up to a generous hard cap)
+ * - Always fetch ALL tables from the instance (no server-side prefix filter) so we
+ * can report the true total count and let the client apply display filters.
+ * - `tables`     — filtered set used for ERD display
+ * - `raw_tables` — every table returned by the instance
  *
  * @param {string} instanceUrl
  * @param {string} username
  * @param {string} password
  * @param {{ tableLimit?: number, includeCore?: boolean }} [opts]
  * @returns {{ tables: object[], columns: object, relationships: object[], raw_tables: object[],
- *             total_tables: number, filtered_tables: number, filter_applied: string }}
+ * total_tables: number, filtered_tables: number, filter_applied: string }}
  */
 export async function fetchServiceNowSchema(instanceUrl, username, password, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
   const client = buildClient(url, username, password);
-  // Display limit for the filtered (ERD-ready) table set
-  const tableLimit  = opts.tableLimit  ?? 1000;
+  
+  // MODIFIED: Merged conflict branch and defaulted to Infinity to ensure no tables are dropped.
+  const tableLimit  = opts.tableLimit  ?? Infinity;
   const includeCore = opts.includeCore ?? false;
 
-  // 1. Fetch ALL tables from the instance (hard cap at 2000 to stay safe)
-  let allTablesRaw;
+  // 1. Fetch ALL tables from the instance using pagination.
+  //    ServiceNow caps sysparm_limit at 10 000 per page; we page until the
+  //    response returns fewer rows than the page size (i.e. last page).
+  const PAGE_SIZE = 10_000;
+  let allTablesRaw = [];
+  let offset = 0;
   try {
-    const res = await client.get('/api/now/table/sys_db_object', {
-      params: {
-        sysparm_limit: 2000,
-        sysparm_fields: 'name,label,sys_id,super_class',
-        sysparm_orderby: 'name',
-      },
-    });
-    allTablesRaw = res.data.result || [];
+    while (true) {
+      const res = await client.get('/api/now/table/sys_db_object', {
+        params: {
+          sysparm_limit:   PAGE_SIZE,
+          sysparm_offset:  offset,
+          sysparm_fields:  'name,label,sys_id,super_class',
+          sysparm_orderby: 'name',
+        },
+      });
+      const page = res.data.result || [];
+      allTablesRaw = allTablesRaw.concat(page);
+      if (page.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
   } catch (err) {
     const status = err.response?.status;
     if (status === 401 || status === 403) throw new Error('Authentication failed — check username and password.');
@@ -129,17 +140,29 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   let dictRaw = [];
   if (tableNames.length > 0) {
     try {
-      // ServiceNow allows up to ~250 values in an IN query; chunk if needed
-      const chunks = chunkArray(tableNames, 100);
+      // MODIFIED: Reduced table chunk size to 50 for safer URI string lengths on giant schemas, 
+      // and introduced a paginated while-loop per chunk to prevent column truncation.
+      const chunks = chunkArray(tableNames, 50);
+      const DICT_PAGE_SIZE = 10_000;
+
       for (const chunk of chunks) {
-        const res = await client.get('/api/now/table/sys_dictionary', {
-          params: {
-            sysparm_query: `nameIN${chunk.join(',')}^internal_type!=collection`,
-            sysparm_limit: 5000,
-            sysparm_fields: 'name,element,label,internal_type,reference,mandatory,max_length',
-          },
-        });
-        dictRaw = dictRaw.concat(res.data.result || []);
+        let dictOffset = 0;
+        while (true) {
+          const res = await client.get('/api/now/table/sys_dictionary', {
+            params: {
+              sysparm_query: `nameIN${chunk.join(',')}^internal_type!=collection`,
+              sysparm_limit:  DICT_PAGE_SIZE,
+              sysparm_offset: dictOffset,
+              sysparm_fields: 'name,element,label,internal_type,reference,mandatory,max_length',
+            },
+          });
+          
+          const page = res.data.result || [];
+          dictRaw = dictRaw.concat(page);
+          
+          if (page.length < DICT_PAGE_SIZE) break;
+          dictOffset += DICT_PAGE_SIZE;
+        }
       }
     } catch (err) {
       // Non-fatal — continue with empty columns
@@ -193,7 +216,6 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   }));
 
   // Build a lightweight raw_tables list (name + label only) for all tables
-  // so the client can apply its own filters without re-fetching.
   const rawTablesNormalised = allTablesRaw.map(t => ({
     name: t.name,
     label: t.label || t.name,
@@ -219,13 +241,6 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
 
 /**
  * Fetch rows from a specific table on a live instance.
- *
- * @param {string} instanceUrl
- * @param {string} username
- * @param {string} password
- * @param {string} tableName
- * @param {{ limit?: number, fields?: string[], query?: string }} [opts]
- * @returns {{ rows: object[], table: string, count: number }}
  */
 export async function fetchServiceNowTableData(instanceUrl, username, password, tableName, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
@@ -246,24 +261,3 @@ export async function fetchServiceNowTableData(instanceUrl, username, password, 
 
   try {
     const res = await client.get(`/api/now/table/${tableName}`, { params });
-    const rows = res.data.result || [];
-    return { rows, table: tableName, count: rows.length };
-  } catch (err) {
-    const status = err.response?.status;
-    if (status === 401 || status === 403) throw new Error('Authentication failed — check username and password.');
-    if (status === 404) throw new Error(`Table "${tableName}" not found on this instance.`);
-    throw new Error(`Failed to fetch data from ${tableName}: ${err.message}`);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-function chunkArray(arr, size) {
-  const chunks = [];
-  for (let i = 0; i < arr.length; i += size) {
-    chunks.push(arr.slice(i, i + size));
-  }
-  return chunks;
-}
