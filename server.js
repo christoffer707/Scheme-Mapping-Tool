@@ -4,6 +4,7 @@ import axios from 'axios';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import comparisonRouter from './routes/comparison.js';
+import liveComparisonRouter from './routes/liveComparison.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -17,6 +18,9 @@ app.use(express.static(join(__dirname, 'public')));
 
 // Mount comparison / analysis routes
 app.use('/api', comparisonRouter);
+
+// Mount live dual-instance comparison routes
+app.use('/api/live', liveComparisonRouter);
 
 // ServiceNow schema cache
 let schemaCache = null;
@@ -154,6 +158,11 @@ app.get('/comparison', (req, res) => {
   res.sendFile(join(__dirname, 'public', 'comparison.html'));
 });
 
+// Serve live dual-instance comparison page
+app.get('/live-compare', (req, res) => {
+  res.sendFile(join(__dirname, 'public', 'live-compare.html'));
+});
+
 function getHTMLPage() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -190,7 +199,8 @@ function getHTMLPage() {
   <div class="container">
     <div class="sidebar">
       <h2>ServiceNow ERD Visualizer</h2>
-      <div style="margin-bottom:12px;padding:8px;background:#f0f7ff;border-radius:4px;"><a href="/comparison" style="color:#0066cc;font-size:13px;font-weight:600;">&#8644; Compare &amp; Analyze Instances &rarr;</a></div>
+      <div style="margin-bottom:6px;padding:8px;background:#f0f7ff;border-radius:4px;"><a href="/comparison" style="color:#0066cc;font-size:13px;font-weight:600;">&#8644; Compare &amp; Analyze Instances &rarr;</a></div>
+      <div style="margin-bottom:12px;padding:8px;background:#f0fff4;border-radius:4px;"><a href="/live-compare" style="color:#1a7a4a;font-size:13px;font-weight:600;">&#9889; Live Dual-Instance Compare &rarr;</a></div>
       <div class="controls">
         <div id="message"></div>
         <div class="form-group">
