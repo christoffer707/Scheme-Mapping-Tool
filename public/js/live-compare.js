@@ -148,15 +148,13 @@ function getTableColor(tableName) {
   }
 }
 
-// ── Table filtering ────────────────────────────────────────────────────────
-
 /**
  * Filter a schema's table list for ERD display.
  *
  * @param {object} schema        Full schema object (must include raw_tables for full set)
  * @param {string} filterType    'user_custom' | 'all' | 'with_relationships'
  * @param {string} [searchQuery] Optional search string matched against name/label
- * @returns {object[]}           Filtered table array (max 100 entries)
+ * @returns {object[]}           Filtered table array (all matching entries — no cap)
  */
 function filterTables(schema, filterType, searchQuery) {
   // Start from the full table list so the user can switch filters without re-fetching
@@ -182,8 +180,8 @@ function filterTables(schema, filterType, searchQuery) {
     );
   }
 
-  // Cap at 100 for vis.js performance
-  return filtered.slice(0, 100);
+  // No artificial cap — return all matching tables.
+  return filtered;
 }
 
 // ── ERD Rendering ──────────────────────────────────────────────────────────
@@ -195,9 +193,10 @@ function filterTables(schema, filterType, searchQuery) {
  * @param {object}   schema       Full schema object { tables, raw_tables, columns, relationships }
  * @param {object}   [highlights] { added: Set, removed: Set, modified: Set }
  * @param {object[]} [tableList]  Pre-filtered table list to render; if omitted, uses schema.tables
+ * @param {string}   [noticeId]   Optional ID of a .erd-large-notice element to show/hide
  * @returns {vis.Network}
  */
-function renderERD(containerId, schema, highlights = {}, tableList) {
+function renderERD(containerId, schema, highlights = {}, tableList, noticeId) {
   const container = $(containerId);
   if (!container) return null;
 
@@ -260,20 +259,31 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
     });
   });
 
-  const data    = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+  const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+
+  // For large graphs (200+ nodes) physics simulation becomes very slow.
+  // Disable it and use a random layout instead — the graph is still fully
+  // navigable (pan/zoom) and individual nodes can be dragged.
+  const isLargeGraph = nodes.length > 200;
+
   const options = {
-    physics: {
-      enabled: true,
-      solver: 'forceAtlas2Based',
-      forceAtlas2Based: {
-        gravitationalConstant: -50,
-        centralGravity: 0.01,
-        springLength: 120,
-        springConstant: 0.08,
-        damping: 0.4,
-      },
-      stabilization: { iterations: 200, updateInterval: 25 },
-    },
+    physics: isLargeGraph
+      ? { enabled: false }
+      : {
+          enabled: true,
+          solver: 'forceAtlas2Based',
+          forceAtlas2Based: {
+            gravitationalConstant: -50,
+            centralGravity: 0.01,
+            springLength: 120,
+            springConstant: 0.08,
+            damping: 0.4,
+          },
+          stabilization: { iterations: 200, updateInterval: 25 },
+        },
+    layout: isLargeGraph
+      ? { randomSeed: 42 }   // deterministic random layout — fast for 1000+ nodes
+      : {},
     interaction: {
       navigationButtons: true,
       keyboard: false,
@@ -285,13 +295,24 @@ function renderERD(containerId, schema, highlights = {}, tableList) {
       shape: 'box',
       margin: 8,
       borderWidth: 1,
-      shadow: { enabled: true, color: 'rgba(0,0,0,0.4)', size: 6, x: 2, y: 2 },
+      // Disable shadows for large graphs — they are expensive to render
+      shadow: isLargeGraph
+        ? { enabled: false }
+        : { enabled: true, color: 'rgba(0,0,0,0.4)', size: 6, x: 2, y: 2 },
     },
     edges: {
       width: 1,
       selectionWidth: 2,
+      // Straight edges render faster than curved ones for large graphs
+      smooth: isLargeGraph ? { enabled: false } : { type: 'continuous' },
     },
   };
+
+  // Show or hide the large-graph performance notice
+  if (noticeId) {
+    const noticeEl = $(noticeId);
+    if (noticeEl) noticeEl.classList.toggle('visible', isLargeGraph);
+  }
 
   return new vis.Network(container, data, options);
 }
@@ -395,14 +416,16 @@ async function connectInstance(n) {
     // Show ERD with filtered table list
     hideEl(`erd-ph-inst${n}`);
     showEl(`erd-net-inst${n}`);
-    const network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables);
+    const network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`);
     state[`inst${n}`].network = network;
 
-    // Show table list (uses schema.tables which is the server-filtered set)
+    // Show table list — use raw_tables (all tables) so the sidebar reflects
+    // the full instance schema, not just the filtered ERD display set.
+    const allTablesForList = schema.raw_tables || schema.tables || [];
     showEl(`table-list-inst${n}-wrap`);
-    $(`table-count-inst${n}`).textContent = schema.tables.length;
-    renderTableList(`table-list-inst${n}`, schema.tables);
-    wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, schema.tables, {});
+    $(`table-count-inst${n}`).textContent = allTablesForList.length;
+    renderTableList(`table-list-inst${n}`, allTablesForList);
+    wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, allTablesForList, {});
 
     // Wire up the ERD filter dropdown and search input
     wireErdFilter(n);
@@ -461,7 +484,7 @@ function wireErdFilter(n) {
       state[`inst${n}`].network.destroy();
     }
     showEl(`erd-net-inst${n}`);
-    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables);
+    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`);
   };
 
   // Use a debounced handler for the search input to avoid re-rendering on every keystroke
@@ -552,7 +575,7 @@ function renderSchemaResults(result) {
     state.inst1.network.destroy();
     state.inst1.network = renderERD('erd-net-inst1', state.inst1.schema,
       { removed: removedSet, modified: modifiedSet },
-      filtered1);
+      filtered1, 'erd-large-notice-inst1');
   }
   if (state.inst2.schema && state.inst2.network) {
     const filtered2 = filterTables(state.inst2.schema,
@@ -561,16 +584,18 @@ function renderSchemaResults(result) {
     state.inst2.network.destroy();
     state.inst2.network = renderERD('erd-net-inst2', state.inst2.schema,
       { added: addedSet, modified: modifiedSet },
-      filtered2);
+      filtered2, 'erd-large-notice-inst2');
   }
 
-  // Re-render table lists with highlights
+  // Re-render table lists with highlights — use raw_tables so all tables are shown
   if (state.inst1.schema) {
-    renderTableList('table-list-inst1', state.inst1.schema.tables,
+    const list1 = state.inst1.schema.raw_tables || state.inst1.schema.tables;
+    renderTableList('table-list-inst1', list1,
       { removed: removedSet, modified: modifiedSet });
   }
   if (state.inst2.schema) {
-    renderTableList('table-list-inst2', state.inst2.schema.tables,
+    const list2 = state.inst2.schema.raw_tables || state.inst2.schema.tables;
+    renderTableList('table-list-inst2', list2,
       { added: addedSet, modified: modifiedSet });
   }
 

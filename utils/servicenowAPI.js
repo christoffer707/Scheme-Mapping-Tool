@@ -22,7 +22,7 @@ function buildClient(instanceUrl, username, password) {
     baseURL: base,
     auth: { username, password },
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    timeout: 30_000,
+    timeout: 120_000,
   });
 }
 
@@ -88,21 +88,34 @@ export async function testServiceNowConnection(instanceUrl, username, password) 
 export async function fetchServiceNowSchema(instanceUrl, username, password, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
   const client = buildClient(url, username, password);
-  // Display limit for the filtered (ERD-ready) table set
-  const tableLimit  = opts.tableLimit  ?? 100;
+  // Display limit for the filtered (ERD-ready) table set.
+  // Default to Infinity so all matching tables are shown; callers may pass a
+  // lower value if they want to cap the result for performance reasons.
+  const tableLimit  = opts.tableLimit  ?? Infinity;
   const includeCore = opts.includeCore ?? false;
 
-  // 1. Fetch ALL tables from the instance (hard cap at 2000 to stay safe)
-  let allTablesRaw;
+  // 1. Fetch ALL tables from the instance using pagination.
+  //    ServiceNow caps sysparm_limit at 10 000 per page; we page until the
+  //    response returns fewer rows than the page size (i.e. last page).
+  const PAGE_SIZE = 10_000;
+  let allTablesRaw = [];
+  let offset = 0;
   try {
-    const res = await client.get('/api/now/table/sys_db_object', {
-      params: {
-        sysparm_limit: 2000,
-        sysparm_fields: 'name,label,sys_id,super_class',
-        sysparm_orderby: 'name',
-      },
-    });
-    allTablesRaw = res.data.result || [];
+    while (true) {
+      const res = await client.get('/api/now/table/sys_db_object', {
+        params: {
+          sysparm_limit:   PAGE_SIZE,
+          sysparm_offset:  offset,
+          sysparm_fields:  'name,label,sys_id,super_class',
+          sysparm_orderby: 'name',
+        },
+      });
+      const page = res.data.result || [];
+      allTablesRaw = allTablesRaw.concat(page);
+      // If we got a full page there may be more; otherwise we're done.
+      if (page.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
   } catch (err) {
     const status = err.response?.status;
     if (status === 401 || status === 403) throw new Error('Authentication failed — check username and password.');
