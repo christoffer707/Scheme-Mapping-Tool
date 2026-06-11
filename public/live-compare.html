@@ -36,9 +36,26 @@
 
     /* ── Page Layout ──────────────────────────────────────────────────── */
     .page { max-width: 1400px; margin: 0 auto; padding: 28px 20px 80px; }
-    .page-header { margin-bottom: 28px; }
+    .page-header { margin-bottom: 20px; }
     .page-title { font-size: 22px; font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 10px; }
     .page-sub   { font-size: 13px; color: #666; }
+
+    /* ── Action bar (Moved to Top) ────────────────────────────────────── */
+    .action-bar {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.1);
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 60px;
+      z-index: 150;
+    }
+    .action-bar-label { font-size: 13px; font-weight: 600; color: #555; margin-right: 4px; }
 
     /* ── Two-column instance grid ─────────────────────────────────────── */
     .instance-grid {
@@ -75,31 +92,11 @@
     /* ── Form Controls ────────────────────────────────────────────────── */
     .form-group { margin-bottom: 12px; }
     .form-group label { display: block; font-size: 12px; font-weight: 600; color: #444; margin-bottom: 4px; }
-    .form-group input {
-      width: 100%;
-      padding: 8px 10px;
-      border: 1px solid #d0d7e2;
-      border-radius: 6px;
-      font-size: 13px;
-      outline: none;
-      transition: border-color .15s;
-    }
+    .form-group input { width: 100%; padding: 8px 10px; border: 1px solid #d0d7e2; border-radius: 6px; font-size: 13px; outline: none; transition: border-color .15s; }
     .form-group input:focus { border-color: #0066cc; }
-    .form-group input.error { border-color: #e53935; }
 
     /* ── Buttons ──────────────────────────────────────────────────────── */
-    .btn {
-      padding: 9px 18px;
-      border: none;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all .15s;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
+    .btn { padding: 9px 18px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
     .btn-primary   { background: #0066cc; color: #fff; }
     .btn-primary:hover   { background: #0052a3; }
     .btn-inst2     { background: #7c3aed; color: #fff; }
@@ -114,15 +111,7 @@
     .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 
     /* ── Status badge ─────────────────────────────────────────────────── */
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 3px 10px;
-      border-radius: 99px;
-      font-size: 11px;
-      font-weight: 600;
-    }
+    .status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; }
     .status-idle       { background: #e2e3e5; color: #555; }
     .status-connecting { background: #fff3cd; color: #856404; }
     .status-connected  { background: #d4edda; color: #155724; }
@@ -132,7 +121,7 @@
     .erd-container {
       border: 1px solid #333;
       border-radius: 8px;
-      background: #1a1a2e;
+      background: #1a1a2e; /* Dark theme to match visualizer */
       height: 500px;
       position: relative;
       overflow: hidden;
@@ -153,69 +142,18 @@
     .erd-network { width: 100%; height: 100%; }
 
     /* ── ERD toolbar (above canvas) ───────────────────────────────────── */
-    .erd-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 6px;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
+    .erd-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; flex-wrap: wrap; gap: 6px; }
     .erd-toolbar-left  { display: flex; align-items: center; gap: 10px; }
-    .erd-toolbar-right { display: flex; align-items: center; gap: 8px; }
     .erd-title { font-size: 12px; font-weight: 600; color: #555; }
 
     /* ── ERD legend ───────────────────────────────────────────────────── */
-    .erd-legend {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .erd-legend-item {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 11px;
-      color: #666;
-    }
-    .erd-legend-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 2px;
-      flex-shrink: 0;
-    }
-
-    /* ── Show-all toggle ──────────────────────────────────────────────── */
-    .erd-toggle-label {
-      font-size: 12px;
-      color: #666;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      cursor: pointer;
-      user-select: none;
-    }
-    .erd-toggle-label input[type="checkbox"] { cursor: pointer; }
+    .erd-legend { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .erd-legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #666; }
+    .erd-legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 
     /* ── Table list ───────────────────────────────────────────────────── */
-    .table-list {
-      max-height: 200px;
-      overflow-y: auto;
-      border: 1px solid #e4e8ef;
-      border-radius: 6px;
-      margin-top: 10px;
-    }
-    .table-list-item {
-      padding: 7px 12px;
-      font-size: 12px;
-      border-bottom: 1px solid #f0f2f5;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      cursor: pointer;
-      transition: background .1s;
-    }
+    .table-list { max-height: 200px; overflow-y: auto; border: 1px solid #e4e8ef; border-radius: 6px; margin-top: 10px; }
+    .table-list-item { padding: 7px 12px; font-size: 12px; border-bottom: 1px solid #f0f2f5; display: flex; align-items: center; justify-content: space-between; cursor: pointer; transition: background .1s; }
     .table-list-item:last-child { border-bottom: none; }
     .table-list-item:hover { background: #f0f7ff; }
     .table-list-item.highlight-added   { background: #f0fff4; border-left: 3px solid #1a7a4a; }
@@ -228,33 +166,13 @@
     /* ── Progress ─────────────────────────────────────────────────────── */
     .progress-wrap { margin-top: 10px; display: none; }
     .progress-wrap.visible { display: block; }
-    .progress-bar-bg {
-      background: #e8ecf0;
-      border-radius: 99px;
-      height: 6px;
-      overflow: hidden;
-      margin-bottom: 5px;
-    }
-    .progress-bar-fill {
-      height: 100%;
-      background: linear-gradient(90deg, #0066cc, #00aaff);
-      border-radius: 99px;
-      transition: width .3s ease;
-      width: 0%;
-    }
+    .progress-bar-bg { background: #e8ecf0; border-radius: 99px; height: 6px; overflow: hidden; margin-bottom: 5px; }
+    .progress-bar-fill { height: 100%; background: linear-gradient(90deg, #0066cc, #00aaff); border-radius: 99px; transition: width .3s ease; width: 0%; }
     .progress-bar-fill.inst2 { background: linear-gradient(90deg, #7c3aed, #a78bfa); }
     .progress-label { font-size: 11px; color: #666; }
 
     /* ── Alerts ───────────────────────────────────────────────────────── */
-    .alert {
-      padding: 10px 14px;
-      border-radius: 6px;
-      font-size: 13px;
-      margin-bottom: 12px;
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-    }
+    .alert { padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; display: flex; align-items: flex-start; gap: 8px; }
     .alert-error   { background: #fdecea; color: #b71c1c; border-left: 4px solid #e53935; }
     .alert-success { background: #e8f5e9; color: #1b5e20; border-left: 4px solid #43a047; }
     .alert-info    { background: #e3f2fd; color: #0d47a1; border-left: 4px solid #1e88e5; }
@@ -263,15 +181,8 @@
     /* ── Comparison results ───────────────────────────────────────────── */
     .results-section { display: none; }
     .results-section.visible { display: block; }
-
     .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
-    .stat-box {
-      background: #f7f9fc;
-      border: 1px solid #e4e8ef;
-      border-radius: 8px;
-      padding: 14px 12px;
-      text-align: center;
-    }
+    .stat-box { background: #f7f9fc; border: 1px solid #e4e8ef; border-radius: 8px; padding: 14px 12px; text-align: center; }
     .stat-box .stat-val { font-size: 26px; font-weight: 700; color: #0066cc; }
     .stat-box .stat-lbl { font-size: 11px; color: #777; margin-top: 2px; text-transform: uppercase; letter-spacing: .4px; }
     .stat-box.green .stat-val { color: #1a7a4a; }
@@ -282,48 +193,19 @@
     /* ── Tables ───────────────────────────────────────────────────────── */
     .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid #e4e8ef; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    thead th {
-      background: #f0f4f8;
-      padding: 9px 12px;
-      text-align: left;
-      font-weight: 700;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      color: #555;
-      border-bottom: 1px solid #dde3ec;
-      white-space: nowrap;
-    }
+    thead th { background: #f0f4f8; padding: 9px 12px; text-align: left; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #555; border-bottom: 1px solid #dde3ec; white-space: nowrap; }
     tbody td { padding: 8px 12px; border-bottom: 1px solid #f0f2f5; vertical-align: top; }
     tbody tr:last-child td { border-bottom: none; }
     tbody tr:hover td { background: #f7f9fc; }
 
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 99px;
-      font-size: 11px;
-      font-weight: 600;
-    }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
     .badge-green  { background: #d4edda; color: #155724; }
     .badge-red    { background: #f8d7da; color: #721c24; }
     .badge-amber  { background: #fff3cd; color: #856404; }
     .badge-blue   { background: #cce5ff; color: #004085; }
-    .badge-gray   { background: #e2e3e5; color: #383d41; }
-    .badge-purple { background: #ede9fe; color: #5b21b6; }
 
     /* ── Accordion ────────────────────────────────────────────────────── */
-    .accordion-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      cursor: pointer;
-      padding: 11px 0;
-      border-bottom: 1px solid #eee;
-      font-weight: 600;
-      font-size: 14px;
-      user-select: none;
-    }
+    .accordion-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; padding: 11px 0; border-bottom: 1px solid #eee; font-weight: 600; font-size: 14px; user-select: none; }
     .accordion-header:hover { color: #0066cc; }
     .accordion-body { padding-top: 14px; display: none; }
     .accordion-body.open { display: block; }
@@ -334,47 +216,18 @@
     .data-form-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
     .data-form-row .form-group { flex: 1; min-width: 160px; }
 
-    /* ── Spinner ──────────────────────────────────────────────────────── */
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner {
-      display: inline-block;
-      width: 13px; height: 13px;
-      border: 2px solid rgba(255,255,255,.4);
-      border-top-color: #fff;
-      border-radius: 50%;
-      animation: spin .7s linear infinite;
-      flex-shrink: 0;
-    }
-
     /* ── Misc ─────────────────────────────────────────────────────────── */
     .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; }
     .text-muted { color: #888; font-size: 12px; }
     .empty-state { text-align: center; padding: 32px 20px; color: #aaa; font-size: 13px; }
-    .empty-state .es-icon { font-size: 36px; margin-bottom: 8px; }
     .hidden { display: none !important; }
     .mt-8  { margin-top: 8px; }
     .mt-12 { margin-top: 12px; }
-    .mt-16 { margin-top: 16px; }
     .section-divider { border: none; border-top: 1px solid #eee; margin: 20px 0; }
-
-    /* ── Action bar ───────────────────────────────────────────────────── */
-    .action-bar {
-      background: #fff;
-      border-radius: 10px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
-      padding: 16px 20px;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    .action-bar-label { font-size: 13px; font-weight: 600; color: #555; margin-right: 4px; }
   </style>
 </head>
 <body>
 
-<!-- ── Top Nav ──────────────────────────────────────────────────────────── -->
 <nav class="topnav">
   <a href="/" class="brand">⚙ Scheme Mapping Tool</a>
   <span class="sep">|</span>
@@ -383,7 +236,6 @@
   <a href="/live-compare" class="active">⚡ Live Compare</a>
 </nav>
 
-<!-- ── Page ─────────────────────────────────────────────────────────────── -->
 <div class="page">
 
   <div class="page-header">
@@ -391,33 +243,26 @@
     <div class="page-sub">Connect directly to two ServiceNow instances and compare schemas and data in real-time — no file exports required.</div>
   </div>
 
-  <!-- ── Global alert ─────────────────────────────────────────────────── -->
+  <div class="action-bar">
+    <span class="action-bar-label">Actions:</span>
+    <button class="btn btn-success" id="btn-compare-schemas" disabled>🔍 Compare Schemas</button>
+    <button class="btn btn-success" id="btn-open-data-compare" disabled>📊 Compare Data</button>
+    <button class="btn btn-secondary" id="btn-download-report" disabled>⬇ Download Report</button>
+  </div>
+
   <div id="global-alert"></div>
 
-  <!-- ════════════════════════════════════════════════════════════════════ -->
-  <!-- INSTANCE CREDENTIAL PANELS                                          -->
-  <!-- ════════════════════════════════════════════════════════════════════ -->
   <div class="instance-grid">
 
-    <!-- Instance 1 -->
     <div class="card instance-card" id="card-inst1">
       <div class="card-title">
         <span>🔵 Instance 1</span>
         <span class="status-badge status-idle" id="status-inst1">● Disconnected</span>
       </div>
 
-      <div class="form-group">
-        <label>Instance URL</label>
-        <input type="url" id="inst1-url" placeholder="https://dev12345.service-now.com" autocomplete="off" />
-      </div>
-      <div class="form-group">
-        <label>Username</label>
-        <input type="text" id="inst1-user" placeholder="admin" autocomplete="off" />
-      </div>
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="inst1-pass" placeholder="••••••••" autocomplete="new-password" />
-      </div>
+      <div class="form-group"><label>Instance URL</label><input type="url" id="inst1-url" placeholder="https://dev12345.service-now.com" autocomplete="off" /></div>
+      <div class="form-group"><label>Username</label><input type="text" id="inst1-user" placeholder="admin" autocomplete="off" /></div>
+      <div class="form-group"><label>Password</label><input type="password" id="inst1-pass" placeholder="••••••••" autocomplete="new-password" /></div>
 
       <div class="btn-row">
         <button class="btn btn-primary" id="btn-connect-inst1">🔌 Connect &amp; Load Schema</button>
@@ -430,9 +275,7 @@
 
       <div id="alert-inst1" class="mt-8"></div>
 
-      <!-- ERD Visualizer -->
       <div class="mt-12">
-        <!-- Filter bar -->
         <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <span style="font-size:12px;color:#666;white-space:nowrap;">
             Showing <strong id="erd-filtered-inst1">0</strong> of <strong id="erd-total-inst1">0</strong> tables
@@ -442,15 +285,15 @@
             <option value="all">All Tables</option>
             <option value="with_relationships">Tables with Relationships</option>
           </select>
-          <input type="text" id="erd-search-inst1" placeholder="Search tables…"
-            style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;flex:1;max-width:200px;" />
+          <input type="text" id="erd-search-inst1" placeholder="Search tables…" style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;flex:1;max-width:200px;" />
         </div>
         <div class="erd-toolbar">
           <div class="erd-toolbar-left">
             <div class="erd-title">ERD Visualizer</div>
             <div class="erd-legend">
-              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#1a7a4a;"></div>Custom (u_*, x_*)</div>
-              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Core (sys_*, cmdb_*)</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#1a7a4a;"></div>Custom</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#e67e22;"></div>Extended</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Core</div>
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#0066cc;"></div>Standard</div>
             </div>
           </div>
@@ -464,36 +307,24 @@
         </div>
       </div>
 
-      <!-- Table list -->
       <div id="table-list-inst1-wrap" class="hidden mt-12">
         <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:4px;">
           Tables (<span id="table-count-inst1">0</span>)
-          <input type="text" id="table-search-inst1" placeholder="Filter tables…"
-            style="margin-left:8px;padding:3px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;width:160px;" />
+          <input type="text" id="table-search-inst1" placeholder="Filter tables…" style="margin-left:8px;padding:3px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;width:160px;" />
         </div>
         <div class="table-list" id="table-list-inst1"></div>
       </div>
     </div>
 
-    <!-- Instance 2 -->
     <div class="card instance-card inst2" id="card-inst2">
       <div class="card-title">
         <span>🟣 Instance 2</span>
         <span class="status-badge status-idle" id="status-inst2">● Disconnected</span>
       </div>
 
-      <div class="form-group">
-        <label>Instance URL</label>
-        <input type="url" id="inst2-url" placeholder="https://dev67890.service-now.com" autocomplete="off" />
-      </div>
-      <div class="form-group">
-        <label>Username</label>
-        <input type="text" id="inst2-user" placeholder="admin" autocomplete="off" />
-      </div>
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="inst2-pass" placeholder="••••••••" autocomplete="new-password" />
-      </div>
+      <div class="form-group"><label>Instance URL</label><input type="url" id="inst2-url" placeholder="https://dev67890.service-now.com" autocomplete="off" /></div>
+      <div class="form-group"><label>Username</label><input type="text" id="inst2-user" placeholder="admin" autocomplete="off" /></div>
+      <div class="form-group"><label>Password</label><input type="password" id="inst2-pass" placeholder="••••••••" autocomplete="new-password" /></div>
 
       <div class="btn-row">
         <button class="btn btn-inst2" id="btn-connect-inst2">🔌 Connect &amp; Load Schema</button>
@@ -506,9 +337,7 @@
 
       <div id="alert-inst2" class="mt-8"></div>
 
-      <!-- ERD Visualizer -->
       <div class="mt-12">
-        <!-- Filter bar -->
         <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <span style="font-size:12px;color:#666;white-space:nowrap;">
             Showing <strong id="erd-filtered-inst2">0</strong> of <strong id="erd-total-inst2">0</strong> tables
@@ -518,15 +347,15 @@
             <option value="all">All Tables</option>
             <option value="with_relationships">Tables with Relationships</option>
           </select>
-          <input type="text" id="erd-search-inst2" placeholder="Search tables…"
-            style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;flex:1;max-width:200px;" />
+          <input type="text" id="erd-search-inst2" placeholder="Search tables…" style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;flex:1;max-width:200px;" />
         </div>
         <div class="erd-toolbar">
           <div class="erd-toolbar-left">
             <div class="erd-title">ERD Visualizer</div>
             <div class="erd-legend">
-              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#1a7a4a;"></div>Custom (u_*, x_*)</div>
-              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Core (sys_*, cmdb_*)</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#1a7a4a;"></div>Custom</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#e67e22;"></div>Extended</div>
+              <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#7c3aed;"></div>Core</div>
               <div class="erd-legend-item"><div class="erd-legend-dot" style="background:#0066cc;"></div>Standard</div>
             </div>
           </div>
@@ -540,47 +369,21 @@
         </div>
       </div>
 
-      <!-- Table list -->
       <div id="table-list-inst2-wrap" class="hidden mt-12">
         <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:4px;">
           Tables (<span id="table-count-inst2">0</span>)
-          <input type="text" id="table-search-inst2" placeholder="Filter tables…"
-            style="margin-left:8px;padding:3px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;width:160px;" />
+          <input type="text" id="table-search-inst2" placeholder="Filter tables…" style="margin-left:8px;padding:3px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;width:160px;" />
         </div>
         <div class="table-list" id="table-list-inst2"></div>
       </div>
     </div>
 
-  </div><!-- /instance-grid -->
-
-  <!-- ════════════════════════════════════════════════════════════════════ -->
-  <!-- ACTION BAR                                                           -->
-  <!-- ════════════════════════════════════════════════════════════════════ -->
-  <div class="action-bar">
-    <span class="action-bar-label">Actions:</span>
-    <button class="btn btn-success" id="btn-compare-schemas" disabled>🔍 Compare Schemas</button>
-    <button class="btn btn-success" id="btn-open-data-compare" disabled>📊 Compare Data</button>
-    <button class="btn btn-secondary" id="btn-download-report" disabled>⬇ Download Report</button>
-  </div>
-
-  <!-- ════════════════════════════════════════════════════════════════════ -->
-  <!-- DATA COMPARE FORM (hidden until opened)                             -->
-  <!-- ════════════════════════════════════════════════════════════════════ -->
-  <div class="card hidden" id="data-compare-panel">
+  </div><div class="card hidden" id="data-compare-panel">
     <div class="card-title"><span>📊</span> Data Comparison</div>
     <div class="data-form-row">
-      <div class="form-group">
-        <label>Table Name</label>
-        <input type="text" id="data-table-name" placeholder="e.g. incident" />
-      </div>
-      <div class="form-group">
-        <label>Key Columns <span class="text-muted">(comma-separated)</span></label>
-        <input type="text" id="data-key-cols" placeholder="e.g. sys_id, number" />
-      </div>
-      <div class="form-group">
-        <label>Compare Columns <span class="text-muted">(blank = all)</span></label>
-        <input type="text" id="data-compare-cols" placeholder="e.g. state, priority" />
-      </div>
+      <div class="form-group"><label>Table Name</label><input type="text" id="data-table-name" placeholder="e.g. incident" /></div>
+      <div class="form-group"><label>Key Columns <span class="text-muted">(comma-separated)</span></label><input type="text" id="data-key-cols" placeholder="e.g. sys_id, number" /></div>
+      <div class="form-group"><label>Compare Columns <span class="text-muted">(blank = all)</span></label><input type="text" id="data-compare-cols" placeholder="e.g. state, priority" /></div>
     </div>
     <div class="btn-row">
       <button class="btn btn-success" id="btn-run-data-compare">📊 Run Data Comparison</button>
@@ -593,41 +396,29 @@
     <div id="alert-data" class="mt-8"></div>
   </div>
 
-  <!-- ════════════════════════════════════════════════════════════════════ -->
-  <!-- COMPARISON RESULTS                                                   -->
-  <!-- ════════════════════════════════════════════════════════════════════ -->
   <div class="results-section" id="results-schemas">
-
     <div class="card">
       <div class="card-title"><span>🔍</span> Schema Comparison Results</div>
       <div id="alert-schemas"></div>
 
-      <!-- Summary stats -->
       <div class="stat-grid" id="schema-stats"></div>
 
-      <!-- Added tables -->
       <div class="accordion-header" onclick="toggleAccordion('acc-added-tables')">
         <span>➕ Tables only in Instance 2 <span class="badge badge-green" id="badge-added-tables">0</span></span>
         <span class="accordion-arrow" id="arr-added-tables">▼</span>
       </div>
-      <div class="accordion-body open" id="acc-added-tables">
-        <div id="list-added-tables" class="table-list" style="max-height:180px;"></div>
-      </div>
+      <div class="accordion-body open" id="acc-added-tables"><div id="list-added-tables" class="table-list" style="max-height:180px;"></div></div>
 
       <hr class="section-divider" />
 
-      <!-- Removed tables -->
       <div class="accordion-header" onclick="toggleAccordion('acc-removed-tables')">
         <span>➖ Tables only in Instance 1 <span class="badge badge-red" id="badge-removed-tables">0</span></span>
         <span class="accordion-arrow" id="arr-removed-tables">▼</span>
       </div>
-      <div class="accordion-body open" id="acc-removed-tables">
-        <div id="list-removed-tables" class="table-list" style="max-height:180px;"></div>
-      </div>
+      <div class="accordion-body open" id="acc-removed-tables"><div id="list-removed-tables" class="table-list" style="max-height:180px;"></div></div>
 
       <hr class="section-divider" />
 
-      <!-- Modified tables -->
       <div class="accordion-header" onclick="toggleAccordion('acc-modified-tables')">
         <span>✏️ Modified Tables (column changes) <span class="badge badge-amber" id="badge-modified-tables">0</span></span>
         <span class="accordion-arrow" id="arr-modified-tables">▼</span>
@@ -635,57 +426,33 @@
       <div class="accordion-body open" id="acc-modified-tables">
         <div class="table-wrap">
           <table id="tbl-modified">
-            <thead>
-              <tr>
-                <th>Table</th>
-                <th>Cols Added</th>
-                <th>Cols Removed</th>
-                <th>Type Changes</th>
-                <th>Total Changes</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Table</th><th>Cols Added</th><th>Cols Removed</th><th>Type Changes</th><th>Total Changes</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
       </div>
     </div>
-
-  </div><!-- /results-schemas -->
-
-  <!-- Data comparison results -->
-  <div class="results-section" id="results-data">
+  </div><div class="results-section" id="results-data">
     <div class="card">
       <div class="card-title"><span>📊</span> Data Comparison Results — <span id="data-result-table" class="mono"></span></div>
       <div id="alert-data-results"></div>
 
       <div class="stat-grid" id="data-stats"></div>
 
-      <!-- Added rows -->
       <div class="accordion-header" onclick="toggleAccordion('acc-data-added')">
-        <span>➕ Added Rows <span class="badge badge-green" id="badge-data-added">0</span></span>
-        <span class="accordion-arrow" id="arr-data-added">▼</span>
+        <span>➕ Added Rows <span class="badge badge-green" id="badge-data-added">0</span></span><span class="accordion-arrow" id="arr-data-added">▼</span>
       </div>
-      <div class="accordion-body open" id="acc-data-added">
-        <div class="table-wrap"><table id="tbl-data-added"><thead><tr></tr></thead><tbody></tbody></table></div>
-      </div>
-
+      <div class="accordion-body open" id="acc-data-added"><div class="table-wrap"><table id="tbl-data-added"><thead><tr></tr></thead><tbody></tbody></table></div></div>
       <hr class="section-divider" />
 
-      <!-- Removed rows -->
       <div class="accordion-header" onclick="toggleAccordion('acc-data-removed')">
-        <span>➖ Removed Rows <span class="badge badge-red" id="badge-data-removed">0</span></span>
-        <span class="accordion-arrow" id="arr-data-removed">▼</span>
+        <span>➖ Removed Rows <span class="badge badge-red" id="badge-data-removed">0</span></span><span class="accordion-arrow" id="arr-data-removed">▼</span>
       </div>
-      <div class="accordion-body open" id="acc-data-removed">
-        <div class="table-wrap"><table id="tbl-data-removed"><thead><tr></tr></thead><tbody></tbody></table></div>
-      </div>
-
+      <div class="accordion-body open" id="acc-data-removed"><div class="table-wrap"><table id="tbl-data-removed"><thead><tr></tr></thead><tbody></tbody></table></div></div>
       <hr class="section-divider" />
 
-      <!-- Changed rows -->
       <div class="accordion-header" onclick="toggleAccordion('acc-data-changed')">
-        <span>✏️ Changed Rows <span class="badge badge-amber" id="badge-data-changed">0</span></span>
-        <span class="accordion-arrow" id="arr-data-changed">▼</span>
+        <span>✏️ Changed Rows <span class="badge badge-amber" id="badge-data-changed">0</span></span><span class="accordion-arrow" id="arr-data-changed">▼</span>
       </div>
       <div class="accordion-body open" id="acc-data-changed">
         <div class="table-wrap">
@@ -696,10 +463,6 @@
         </div>
       </div>
     </div>
-  </div><!-- /results-data -->
-
-</div><!-- /page -->
-
-<script src="/js/live-compare.js"></script>
+  </div></div><script src="/js/live-compare.js"></script>
 </body>
 </html>
