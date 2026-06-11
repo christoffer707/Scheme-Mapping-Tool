@@ -4,7 +4,9 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import comparisonRouter from './routes/comparison.js';
 import liveComparisonRouter from './routes/liveComparison.js';
-import { fetchServiceNowSchema } from './utils/servicenowAPI.js';
+
+// Import our new artifact fetcher alongside the schema fetcher
+import { fetchServiceNowSchema, fetchServiceNowTableArtifacts } from './utils/servicenowAPI.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -18,58 +20,52 @@ app.use('/api', comparisonRouter);
 app.use('/api/live', liveComparisonRouter);
 
 let schemaCache = null;
+let currentCredentials = null; // Stored temporarily in-memory to allow follow-up drill-downs
 
+// 1. Generate the Base ERD
 app.post('/api/erd/generate', async (req, res) => {
   try {
     const { instance, username, password } = req.body;
-
-    if (!instance || !username || !password) {
-      return res.status(400).json({ error: 'Missing required fields: instance, username, password' });
-    }
+    if (!instance || !username || !password) return res.status(400).json({ error: 'Missing required fields.' });
 
     const schema = await fetchServiceNowSchema(instance, username, password, { includeCore: true });
+    
+    // Save creds temporarily so the frontend can query artifacts later without re-typing
+    currentCredentials = { instance, username, password };
 
     const entities = {};
     schema.tables.forEach(t => {
-      entities[t.name] = {
-        id: t.sys_id,
-        name: t.name,
-        label: t.label,
-        fields: schema.columns[t.name] || []
-      };
+      entities[t.name] = { id: t.sys_id, name: t.name, label: t.label, fields: schema.columns[t.name] || [] };
     });
 
-    const erd = { entities, relationships: schema.relationships };
-    schemaCache = erd;
-
-    res.json({
-      success: true,
-      message: `Successfully generated ERD for ${schema.tables.length} tables`,
-      erd
-    });
+    schemaCache = { entities, relationships: schema.relationships };
+    res.json({ success: true, message: `Loaded ${schema.tables.length} tables.`, erd: schemaCache });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/erd', (req, res) => {
-  if (!schemaCache) {
-    return res.status(404).json({ error: 'No ERD generated yet. POST to /api/erd/generate first.' });
+// 2. Fetch specific table artifacts (Drill-down)
+app.post('/api/erd/table-details', async (req, res) => {
+  try {
+    const { table } = req.body;
+    if (!table || !currentCredentials) return res.status(400).json({ error: 'Missing table or session expired.' });
+
+    const artifacts = await fetchServiceNowTableArtifacts(
+      currentCredentials.instance, 
+      currentCredentials.username, 
+      currentCredentials.password, 
+      table
+    );
+    res.json({ success: true, artifacts });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-  res.json(schemaCache);
 });
 
-app.get('/', (req, res) => {
-  res.send(getHTMLPage());
-});
-
-app.get('/comparison', (req, res) => {
-  res.sendFile(join(__dirname, 'public', 'comparison.html'));
-});
-
-app.get('/live-compare', (req, res) => {
-  res.sendFile(join(__dirname, 'public', 'live-compare.html'));
-});
+app.get('/', (req, res) => res.send(getHTMLPage()));
+app.get('/comparison', (req, res) => res.sendFile(join(__dirname, 'public', 'comparison.html')));
+app.get('/live-compare', (req, res) => res.sendFile(join(__dirname, 'public', 'live-compare.html')));
 
 function getHTMLPage() {
   return `<!DOCTYPE html>
@@ -95,38 +91,46 @@ function getHTMLPage() {
     /* Main Canvas */
     .main { flex: 1; position: relative; background: #1a1a2e; display: flex; }
     #network { flex: 1; height: 100%; }
+    .canvas-overlay { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.6); padding: 10px 15px; border-radius: 6px; font-size: 13px; z-index: 5; pointer-events: none; }
     
     /* Detail Panel (Right) */
-    .detail-panel { width: 400px; background: white; border-left: 1px solid #ddd; display: flex; flex-direction: column; transform: translateX(100%); transition: transform 0.3s ease; position: absolute; right: 0; top: 0; bottom: 0; z-index: 20; box-shadow: -4px 0 15px rgba(0,0,0,0.1); }
+    .detail-panel { width: 450px; background: white; border-left: 1px solid #ddd; display: flex; flex-direction: column; transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: absolute; right: 0; top: 0; bottom: 0; z-index: 20; box-shadow: -4px 0 25px rgba(0,0,0,0.2); }
     .detail-panel.open { transform: translateX(0); }
     .detail-header { padding: 20px; background: #0066cc; color: white; display: flex; justify-content: space-between; align-items: center; }
     .detail-close { cursor: pointer; font-size: 20px; font-weight: bold; }
     .detail-body { flex: 1; overflow-y: auto; padding: 20px; }
-    .artifact-section { margin-bottom: 20px; }
-    .artifact-section h4 { border-bottom: 2px solid #eee; padding-bottom: 5px; margin-bottom: 10px; color: #555; }
-    .artifact-item { background: #f5f5f5; padding: 8px; margin-bottom: 5px; border-radius: 4px; font-size: 12px; border-left: 3px solid #7c3aed; }
     
+    /* Artifacts */
+    .artifact-section { margin-bottom: 24px; }
+    .artifact-section h4 { border-bottom: 2px solid #eee; padding-bottom: 5px; margin-bottom: 12px; color: #333; font-size: 14px; display: flex; justify-content: space-between; }
+    .artifact-item { background: #f8f9fa; padding: 10px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #e9ecef; border-left: 4px solid #7c3aed; }
+    .artifact-title { font-weight: 600; font-size: 13px; color: #222; margin-bottom: 4px; word-break: break-all; }
+    .artifact-meta { font-size: 11px; color: #666; display: flex; gap: 8px; flex-wrap: wrap; }
+    .badge { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
+    .badge-active { background: #d4edda; color: #155724; }
+    .badge-inactive { background: #f8d7da; color: #721c24; }
+    .badge-type { background: #e2e3e5; color: #383d41; }
+
     /* Form Elements */
     .form-group { margin-bottom: 12px; }
     label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 12px; color: #555; }
     input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
-    input:focus { border-color: #0066cc; outline: none; }
-    button { background: #0066cc; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; width: 100%; transition: background 0.2s; }
+    button { background: #0066cc; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; width: 100%; margin-bottom: 8px; }
     button:hover { background: #0052a3; }
+    button.btn-secondary { background: #444; }
+    button.btn-secondary:hover { background: #222; }
     
     /* Table Items */
-    .entity-item { padding: 10px; background: #fff; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; cursor: pointer; border-left: 4px solid #0066cc; transition: background 0.1s; }
+    .entity-item { padding: 10px; background: #fff; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; cursor: pointer; border-left: 4px solid #0066cc; }
     .entity-item:hover { background: #f0f7ff; }
     .entity-item.active { background: #e6f2ff; border-color: #cce5ff; }
     .entity-item h4 { font-size: 13px; margin-bottom: 3px; word-break: break-all; }
     .entity-item p { font-size: 11px; color: #888; }
     
-    /* Helpers */
     .empty-state { text-align: center; color: #888; padding: 40px 20px; font-size: 14px; }
     .alert { padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 13px; }
-    .alert.error { background: #ffebee; color: #c62828; border-left: 4px solid #c62828; }
-    .alert.success { background: #e8f5e9; color: #2e7d32; border-left: 4px solid #2e7d32; }
-    .alert.loading { background: #e3f2fd; color: #1565c0; border-left: 4px solid #1565c0; }
+    .alert.error { background: #ffebee; color: #c62828; }
+    .alert.loading { background: #e3f2fd; color: #1565c0; }
   </style>
 </head>
 <body>
@@ -134,72 +138,58 @@ function getHTMLPage() {
     <div class="sidebar">
       <div class="sidebar-header">
         <h2 style="font-size: 18px; color: #333;">SN ERD Visualizer</h2>
-        <div style="margin-top:10px; display:flex; gap:10px;">
-          <a href="/comparison" style="font-size:11px; color:#0066cc; text-decoration:none;">&#8644; Compare</a>
-          <a href="/live-compare" style="font-size:11px; color:#1a7a4a; text-decoration:none;">&#9889; Live Sync</a>
-        </div>
       </div>
       
       <div class="controls">
         <div id="message"></div>
-        <div class="form-group">
-          <label>Instance Name</label>
-          <input type="text" id="instance" placeholder="e.g., dev12345">
-        </div>
-        <div class="form-group">
-          <label>Username</label>
-          <input type="text" id="username" placeholder="admin">
-        </div>
-        <div class="form-group">
-          <label>Password</label>
-          <input type="password" id="password" placeholder="••••••••">
-        </div>
+        <div class="form-group"><label>Instance Name</label><input type="text" id="instance" placeholder="dev12345"></div>
+        <div class="form-group"><label>Username</label><input type="text" id="username" placeholder="admin"></div>
+        <div class="form-group"><label>Password</label><input type="password" id="password" placeholder="••••••••"></div>
         <button onclick="generateERD()">Connect & Fetch Schema</button>
       </div>
 
       <div class="table-search-container" id="search-container" style="display:none;">
         <input type="text" id="tableSearch" placeholder="Search tables (e.g., incident)..." onkeyup="filterTables()">
+        <button class="btn-secondary" style="margin-top: 10px; font-size: 11px; padding: 6px;" onclick="renderMacroGraph()">Show All Relationships (Macro View)</button>
         <div style="font-size: 11px; color: #888; margin-top: 6px;" id="table-count-label"></div>
       </div>
 
-      <div class="entity-list" id="entityList">
-        <div class="empty-state">Connect to an instance to load tables.</div>
-      </div>
+      <div class="entity-list" id="entityList"><div class="empty-state">Connect to load tables.</div></div>
     </div>
 
     <div class="main">
+      <div class="canvas-overlay" id="canvas-status">Waiting for connection...</div>
       <div id="network"></div>
       
       <div class="detail-panel" id="detailPanel">
         <div class="detail-header">
           <div>
             <div style="font-size: 12px; opacity: 0.8;">Selected Table</div>
-            <h3 id="dp-table-name" style="margin: 0; font-size: 18px; word-break: break-all;">table_name</h3>
+            <h3 id="dp-table-name" style="margin: 0; font-size: 18px;">table_name</h3>
           </div>
           <div class="detail-close" onclick="closeDetailPanel()">✕</div>
         </div>
         <div class="detail-body" id="dp-body">
-          <div class="empty-state" id="dp-loading">Loading table artifacts...</div>
+          <div class="empty-state" id="dp-loading">Fetching table artifacts from ServiceNow...</div>
           
           <div id="dp-content" style="display:none;">
             <div class="artifact-section">
-              <h4>Fields & Columns</h4>
-              <div style="font-size:13px; color:#666;" id="dp-fields-count">0 fields</div>
+              <h4><span>Database Columns</span> <span class="badge badge-type" id="dp-fields-count">0</span></h4>
             </div>
 
             <div class="artifact-section">
-              <h4>Business Rules</h4>
-              <div id="dp-brs"><div class="artifact-item" style="color:#888;">(Backend integration required)</div></div>
+              <h4><span>Business Rules</span> <span class="badge badge-type" id="dp-br-count">0</span></h4>
+              <div id="dp-brs"></div>
             </div>
 
             <div class="artifact-section">
-              <h4>Client Scripts & UI Policies</h4>
-              <div id="dp-scripts"><div class="artifact-item" style="color:#888;">(Backend integration required)</div></div>
+              <h4><span>Client Scripts</span> <span class="badge badge-type" id="dp-cs-count">0</span></h4>
+              <div id="dp-scripts"></div>
             </div>
             
             <div class="artifact-section">
-              <h4>Flows / Workflows</h4>
-              <div id="dp-flows"><div class="artifact-item" style="color:#888;">(Backend integration required)</div></div>
+              <h4><span>UI Policies</span> <span class="badge badge-type" id="dp-ui-count">0</span></h4>
+              <div id="dp-policies"></div>
             </div>
           </div>
         </div>
@@ -210,7 +200,7 @@ function getHTMLPage() {
   <script>
     let network = null;
     let currentERD = null;
-    let tableDOMNodes = []; // For fast searching
+    let tableDOMNodes = []; 
 
     async function generateERD() {
       const instance = document.getElementById('instance').value;
@@ -218,12 +208,10 @@ function getHTMLPage() {
       const password = document.getElementById('password').value;
       const messageDiv = document.getElementById('message');
 
-      if (!instance || !username || !password) {
-        messageDiv.innerHTML = '<div class="alert error">Please fill in all fields</div>';
-        return;
-      }
+      if (!instance || !username || !password) return messageDiv.innerHTML = '<div class="alert error">Fill in all fields</div>';
 
-      messageDiv.innerHTML = '<div class="alert loading">Fetching entire schema. This may take a moment...</div>';
+      messageDiv.innerHTML = '<div class="alert loading">Fetching schema...</div>';
+      document.getElementById('canvas-status').innerText = 'Fetching schema...';
 
       try {
         const response = await fetch('/api/erd/generate', {
@@ -232,37 +220,28 @@ function getHTMLPage() {
           body: JSON.stringify({ instance, username, password })
         });
 
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error);
-        }
+        if (!response.ok) throw new Error((await response.json()).error);
 
         const data = await response.json();
         currentERD = data.erd;
-        messageDiv.innerHTML = \`<div class="alert success">\${data.message}</div>\`;
+        messageDiv.innerHTML = '';
         
         document.getElementById('search-container').style.display = 'block';
         document.getElementById('table-count-label').innerText = \`\${Object.keys(currentERD.entities).length} tables loaded\`;
+        document.getElementById('canvas-status').innerText = 'Search and click a table in the sidebar to map its relationships.';
         
         populateEntityList(currentERD);
-        
-        // Initialize an empty network canvas
-        const container = document.getElementById('network');
-        network = new vis.Network(container, { nodes: [], edges: [] }, {});
-        
+        if(network) network.destroy();
+        network = new vis.Network(document.getElementById('network'), { nodes: [], edges: [] }, {});
       } catch (error) {
-        messageDiv.innerHTML = \`<div class="alert error">Error: \${error.message}</div>\`;
+        messageDiv.innerHTML = \`<div class="alert error">\${error.message}</div>\`;
+        document.getElementById('canvas-status').innerText = 'Error loading schema.';
       }
     }
 
     function getTableColor(tableName) {
       if (tableName.startsWith('u_') || tableName.startsWith('x_')) return { bg: '#1a7a4a', border: '#155f3a' };
-      if (
-        tableName.startsWith('sys_') || 
-        tableName.startsWith('cmdb_') || 
-        tableName.startsWith('sn_') || 
-        ['incident', 'change_request', 'problem', 'request', 'sc_req_item', 'task'].includes(tableName)
-      ) return { bg: '#7c3aed', border: '#6d28d9' };
+      if (tableName.startsWith('sys_') || tableName.startsWith('cmdb_') || tableName.startsWith('sn_')) return { bg: '#7c3aed', border: '#6d28d9' };
       return { bg: '#0066cc', border: '#003d99' };
     }
 
@@ -271,24 +250,13 @@ function getHTMLPage() {
       list.innerHTML = '';
       tableDOMNodes = [];
 
-      // Sort alphabetically
-      const sortedKeys = Object.keys(erd.entities).sort();
-
-      sortedKeys.forEach(name => {
+      Object.keys(erd.entities).sort().forEach(name => {
         const entity = erd.entities[name];
         const div = document.createElement('div');
         div.className = 'entity-item';
-        
-        const c = getTableColor(name);
-        div.style.borderLeftColor = c.bg;
-        
-        div.innerHTML = \`
-          <h4>\${name}</h4>
-          <p>\${entity.label || 'No Label'} • \${entity.fields.length} cols</p>
-        \`;
-        
+        div.style.borderLeftColor = getTableColor(name).bg;
+        div.innerHTML = \`<h4>\${name}</h4><p>\${entity.label || 'No Label'}</p>\`;
         div.onclick = () => selectAndRenderTable(name, div);
-        
         list.appendChild(div);
         tableDOMNodes.push({ name: name, label: (entity.label || '').toLowerCase(), element: div });
       });
@@ -297,98 +265,161 @@ function getHTMLPage() {
     function filterTables() {
       const q = document.getElementById('tableSearch').value.toLowerCase();
       tableDOMNodes.forEach(item => {
-        if (item.name.toLowerCase().includes(q) || item.label.includes(q)) {
-          item.element.style.display = 'block';
-        } else {
-          item.element.style.display = 'none';
-        }
+        item.element.style.display = (item.name.toLowerCase().includes(q) || item.label.includes(q)) ? 'block' : 'none';
       });
     }
 
-    // Contextual Rendering: Only render the selected node and its direct neighbors
+    // Contextual Graphing (1st-degree relations)
     function selectAndRenderTable(targetTableName, clickedElement) {
-      // Handle UI highlighting
       document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
       if (clickedElement) clickedElement.classList.add('active');
 
-      openDetailPanel(targetTableName);
+      document.getElementById('canvas-status').innerText = \`Viewing dependencies for: \${targetTableName}\`;
+      fetchTableArtifacts(targetTableName); // Trigger drill down
 
       const nodes = new vis.DataSet();
       const edges = new vis.DataSet();
       const addedNodes = new Set();
 
-      // Helper to add a node if it doesn't exist yet
       function addNode(tableName, isCenter = false) {
         if (addedNodes.has(tableName)) return;
         const entity = currentERD.entities[tableName];
-        if (!entity) return; // Table might not be in our dataset
+        if (!entity) return; 
         
         const c = getTableColor(tableName);
         nodes.add({
-          id: tableName,
-          label: tableName,
-          title: entity.label || tableName,
+          id: tableName, label: tableName, title: entity.label,
           color: { background: c.bg, border: c.border },
           font: { color: 'white', size: isCenter ? 16 : 12 },
-          shape: 'box',
-          margin: 10,
-          borderWidth: isCenter ? 3 : 1,
-          shadow: true
+          shape: 'box', margin: 10, borderWidth: isCenter ? 3 : 1, shadow: true
         });
         addedNodes.add(tableName);
       }
 
-      // Add the center node
       addNode(targetTableName, true);
 
-      // Find all relationships involving this table
       currentERD.relationships.forEach(rel => {
-        if (rel.from === targetTableName) {
-          addNode(rel.to);
+        if (rel.from === targetTableName || rel.to === targetTableName) {
+          addNode(rel.from === targetTableName ? rel.to : rel.from);
           edges.add({
-            from: rel.from,
-            to: rel.to,
-            label: rel.field,
-            arrows: 'to',
-            color: { color: '#888', highlight: '#00aaff' },
-            font: { size: 10, color: '#aaa', strokeWidth: 0 }
-          });
-        } else if (rel.to === targetTableName) {
-          addNode(rel.from);
-          edges.add({
-            from: rel.from,
-            to: rel.to,
-            label: rel.field,
-            arrows: 'to',
-            color: { color: '#888', highlight: '#00aaff' },
-            font: { size: 10, color: '#aaa', strokeWidth: 0 }
+            from: rel.from, to: rel.to, label: rel.field, arrows: 'to',
+            color: { color: '#888', highlight: '#00aaff' }, font: { size: 10, color: '#aaa', strokeWidth: 0 }
           });
         }
       });
 
-      const container = document.getElementById('network');
-      const options = {
-        physics: {
-          enabled: true,
-          barnesHut: { gravitationalConstant: -2000, centralGravity: 0.3, springLength: 150 }
-        },
-        interaction: { hover: true, tooltipDelay: 200 }
-      };
-
-      if (network) { network.destroy(); }
-      network = new vis.Network(container, { nodes, edges }, options);
+      if (network) network.destroy();
+      network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
+        physics: { enabled: true, barnesHut: { gravitationalConstant: -2000, centralGravity: 0.3 } },
+        interaction: { hover: true }
+      });
     }
 
-    function openDetailPanel(tableName) {
+    // Macro Graph (All tables, physics disabled to prevent crashes)
+    function renderMacroGraph() {
+      document.getElementById('canvas-status').innerText = 'Rendering entire instance schema (Physics Disabled for performance)...';
+      const nodes = new vis.DataSet();
+      const edges = new vis.DataSet();
+      
+      Object.keys(currentERD.entities).forEach(name => {
+        const c = getTableColor(name);
+        nodes.add({
+          id: name, label: name,
+          color: { background: c.bg, border: c.border }, font: { color: 'white', size: 10 },
+          shape: 'box', margin: 6
+        });
+      });
+
+      currentERD.relationships.forEach(rel => {
+        if (currentERD.entities[rel.from] && currentERD.entities[rel.to]) {
+          edges.add({ from: rel.from, to: rel.to, arrows: 'to', color: { color: '#444' } });
+        }
+      });
+
+      if (network) network.destroy();
+      network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
+        physics: { enabled: false }, // Crucial for hairball survival
+        layout: { improvedLayout: false },
+        interaction: { hideEdgesOnDrag: true, hideEdgesOnZoom: true }
+      });
+    }
+
+    // Drill-Down Data Fetching
+    async function fetchTableArtifacts(tableName) {
       const panel = document.getElementById('detailPanel');
       document.getElementById('dp-table-name').innerText = tableName;
-      
-      const entity = currentERD.entities[tableName];
-      document.getElementById('dp-fields-count').innerText = \`\${entity ? entity.fields.length : 0} defined dictionary fields\`;
-      
+      document.getElementById('dp-loading').style.display = 'block';
+      document.getElementById('dp-content').style.display = 'none';
+      panel.classList.add('open');
+
+      try {
+        const res = await fetch('/api/erd/table-details', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: tableName })
+        });
+        const data = await res.json();
+        
+        if(data.success) {
+           renderArtifacts(tableName, data.artifacts);
+        } else {
+           document.getElementById('dp-loading').innerHTML = '<span style="color:red">Failed to load artifacts.</span>';
+        }
+      } catch (e) {
+        document.getElementById('dp-loading').innerHTML = '<span style="color:red">Error communicating with server.</span>';
+      }
+    }
+
+    function renderArtifacts(tableName, art) {
       document.getElementById('dp-loading').style.display = 'none';
       document.getElementById('dp-content').style.display = 'block';
-      panel.classList.add('open');
+
+      // 1. Fields
+      const entity = currentERD.entities[tableName];
+      document.getElementById('dp-fields-count').innerText = entity ? entity.fields.length : 0;
+
+      // Helper to generate HTML for artifacts
+      const buildHtml = (items, renderer) => items.length === 0 
+        ? '<div class="empty-state" style="padding:10px;">None found</div>' 
+        : items.map(renderer).join('');
+
+      // 2. Business Rules
+      document.getElementById('dp-br-count').innerText = art.businessRules.length;
+      document.getElementById('dp-brs').innerHTML = buildHtml(art.businessRules, br => \`
+        <div class="artifact-item">
+          <div class="artifact-title">\${br.name}</div>
+          <div class="artifact-meta">
+            <span class="badge \${br.active === 'true' ? 'badge-active' : 'badge-inactive'}">\${br.active === 'true' ? 'Active' : 'Inactive'}</span>
+            \${br.when ? \`<span class="badge badge-type">\${br.when}</span>\` : ''}
+            \span style="margin-left:auto; color:#888;">
+              \${br.action_insert==='true'?'Ins ':''}\${br.action_update==='true'?'Upd ':''}\${br.action_delete==='true'?'Del ':''}
+            </span>
+          </div>
+        </div>
+      \`);
+
+      // 3. Client Scripts
+      document.getElementById('dp-cs-count').innerText = art.clientScripts.length;
+      document.getElementById('dp-scripts').innerHTML = buildHtml(art.clientScripts, cs => \`
+        <div class="artifact-item" style="border-left-color: #1a7a4a;">
+          <div class="artifact-title">\${cs.name}</div>
+          <div class="artifact-meta">
+            <span class="badge \${cs.active === 'true' ? 'badge-active' : 'badge-inactive'}">\${cs.active === 'true' ? 'Active' : 'Inactive'}</span>
+            \${cs.type ? \`<span class="badge badge-type">\${cs.type}</span>\` : ''}
+          </div>
+        </div>
+      \`);
+
+      // 4. UI Policies
+      document.getElementById('dp-ui-count').innerText = art.uiPolicies.length;
+      document.getElementById('dp-policies').innerHTML = buildHtml(art.uiPolicies, ui => \`
+        <div class="artifact-item" style="border-left-color: #0066cc;">
+          <div class="artifact-title">\${ui.short_description || 'Untitled'}</div>
+          <div class="artifact-meta">
+            <span class="badge \${ui.active === 'true' ? 'badge-active' : 'badge-inactive'}">\${ui.active === 'true' ? 'Active' : 'Inactive'}</span>
+          </div>
+        </div>
+      \`);
     }
 
     function closeDetailPanel() {
@@ -401,6 +432,4 @@ function getHTMLPage() {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`ServiceNow ERD Visualizer running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`ServiceNow ERD Visualizer running on port ${PORT}`));
