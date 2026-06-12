@@ -105,7 +105,6 @@
   </nav>
 
   <div class="main-layout">
-    <!-- Global Credential Sidebar -->
     <div class="sidebar">
       <div>
         <h3><span style="color:#e67e22;">🔑</span> Global Credentials</h3>
@@ -120,7 +119,6 @@
       </div>
     </div>
 
-    <!-- Main Content Area -->
     <div class="content" id="dashboard">
       <div class="section-title"><span style="color:#a78bfa;">🔍</span> Data Quality & Analysis</div>
       <div class="grid">
@@ -143,6 +141,16 @@
 
       <div class="section-title"><span style="color:#f472b6;">⚙️</span> Data Transformation</div>
       <div class="grid">
+        <div class="tool-card" onclick="openTool('row-filter')">
+          <div class="tool-icon" style="color:#f472b6;">⚡</div>
+          <h4>Row Filter</h4>
+          <p>Filter data with logic conditions to keep only matching rows before exporting.</p>
+        </div>
+        <div class="tool-card" onclick="openTool('calculated-columns')">
+          <div class="tool-icon" style="color:#f472b6;">🧮</div>
+          <h4>Calculated Columns</h4>
+          <p>Create new columns on the fly using math formulas or string concatenation.</p>
+        </div>
         <div class="tool-card" onclick="openTool('find-replace')">
           <div class="tool-icon" style="color:#f472b6;">🔎</div>
           <h4>Find & Replace</h4>
@@ -171,7 +179,6 @@
       </div>
     </div>
 
-    <!-- Universal Tool Workspace -->
     <div class="content" id="workspace">
       <div class="ws-header">
         <button class="btn-back" onclick="closeTool()">&#8592; Back to Dashboard</button>
@@ -183,7 +190,6 @@
         <div class="toggle-btn" id="btn-mode-live" onclick="setMode('live')">⚡ Live Instance Pull</div>
       </div>
 
-      <!-- File Input -->
       <div class="input-panel" id="panel-file">
         <div class="drop-zone">
           <input type="file" id="ws-file" accept=".csv,.xlsx,.xls" onchange="document.getElementById('ws-file-name').innerText = this.files[0] ? this.files[0].name : ''" />
@@ -193,7 +199,6 @@
         </div>
       </div>
 
-      <!-- Live Input -->
       <div class="input-panel hidden" id="panel-live">
         <p style="color:#8f9bb3; font-size:13px; margin-bottom:15px;">Credentials will be pulled from the Global Sidebar.</p>
         <div class="row-flex">
@@ -206,13 +211,11 @@
         </div>
       </div>
 
-      <!-- Tool Specific Options Inject Here -->
       <div class="input-panel" id="ws-options"></div>
 
       <button class="btn-run" id="btn-run-tool">Run Tool</button>
       <div id="ws-alert"></div>
 
-      <!-- Results Rendering Section -->
       <div id="ws-results" class="hidden"></div>
     </div>
   </div>
