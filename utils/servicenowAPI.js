@@ -11,18 +11,8 @@ import axios from 'axios';
 const BACKEND_SCHEMA_CACHE = new Map();
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers & Session Management
 // ---------------------------------------------------------------------------
-
-function buildClient(instanceUrl, username, password) {
-  const base = instanceUrl.replace(/\/+$/, ''); 
-  return axios.create({
-    baseURL: base,
-    auth: { username, password },
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    timeout: 120_000,
-  });
-}
 
 export function normaliseInstanceUrl(raw) {
   const s = (raw || '').trim();
@@ -32,11 +22,43 @@ export function normaliseInstanceUrl(raw) {
   throw new Error(`Invalid instance URL: "${s}". Provide a full URL or a bare instance name.`);
 }
 
+/**
+ * Executes a single initial request with the Password/MFA token to establish a session.
+ * It then extracts the JSESSIONID cookie and attaches it to all future concurrent requests
+ * so the MFA token doesn't get flagged as a "Replay Attack".
+ */
+async function buildSessionClient(instanceUrl, username, password) {
+  const base = instanceUrl.replace(/\/+$/, ''); 
+  const client = axios.create({
+    baseURL: base,
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    timeout: 120_000,
+  });
+
+  // 1. Fire exactly ONE request to validate the MFA token
+  const res = await client.get('/api/now/table/sys_db_object', {
+    params: { sysparm_limit: 1, sysparm_fields: 'name' },
+    auth: { username, password }
+  });
+
+  // 2. Extract the session cookies
+  const cookies = res.headers['set-cookie'];
+  if (cookies) {
+    // Strip out the metadata (Path=/, HttpOnly) and join the raw cookies
+    client.defaults.headers.common['Cookie'] = cookies.map(c => c.split(';')[0]).join('; ');
+  } else {
+    // Failsafe: Fallback to basic auth if cookies are disabled
+    client.defaults.auth = { username, password };
+  }
+
+  return client;
+}
+
 // ---------------------------------------------------------------------------
 // High-Performance Concurrent Fetcher
 // ---------------------------------------------------------------------------
 async function fastFetchAll(client, endpoint, query, fields) {
-  const PAGE_SIZE = 2500; // Lowered to 2500 to prevent ServiceNow transaction timeouts
+  const PAGE_SIZE = 2500; 
   let total = NaN;
   
   const baseParams = {
@@ -98,16 +120,14 @@ async function fastFetchAll(client, endpoint, query, fields) {
 
 export async function testServiceNowConnection(instanceUrl, username, password) {
   const url = normaliseInstanceUrl(instanceUrl);
-  const client = buildClient(url, username, password);
   try {
-    await client.get('/api/now/table/sys_db_object', {
-      params: { sysparm_limit: 1, sysparm_fields: 'name' },
-    });
+    // Building the session client inherently tests the connection and MFA
+    await buildSessionClient(url, username, password);
     return { success: true, instance_url: url };
   } catch (err) {
     const status = err.response?.status;
     if (status === 401 || status === 403) {
-      return { success: false, instance_url: url, error: 'Authentication failed — check username and password.' };
+      return { success: false, instance_url: url, error: 'Authentication failed — check username, password, and MFA token.' };
     }
     return { success: false, instance_url: url, error: err.message };
   }
@@ -119,7 +139,6 @@ export async function testServiceNowConnection(instanceUrl, username, password) 
 
 export async function fetchServiceNowSchema(instanceUrl, username, password, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
-  // THE FIX: Check for both snake_case and camelCase parameters
   const includeCore = opts.includeCore ?? opts.include_core ?? false;
   
   const cacheKey = `${url}_${includeCore ? 'core' : 'custom'}`;
@@ -130,16 +149,15 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   }
   
   console.log(`[CACHE MISS] Fetching fresh schema for ${cacheKey}...`);
-  // Ensure the properly resolved boolean is passed down
   const schema = await fetchServiceNowSchemaInternal(url, username, password, { ...opts, includeCore });
   
   BACKEND_SCHEMA_CACHE.set(cacheKey, schema);
   return schema;
 }
 
-// Internal Fetcher containing the optimized Concurrent Logic
 async function fetchServiceNowSchemaInternal(url, username, password, opts) {
-  const client = buildClient(url, username, password);
+  // Use the session client to bypass MFA Replay limits
+  const client = await buildSessionClient(url, username, password);
   
   const tableLimit  = opts.tableLimit ?? Infinity;
   const includeCore = opts.includeCore;
@@ -152,7 +170,6 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
     throw new Error(`Failed to fetch table list: ${err.message}`);
   }
 
-  // Failsafe to prevent silent "0 tables" issues
   if (!allTablesRaw || allTablesRaw.length === 0) {
     throw new Error("ServiceNow API returned 0 tables. Verify user roles, API permissions, or transaction quotas.");
   }
@@ -172,7 +189,7 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
 
   const tableNameSet = new Set(tablesRaw.map(t => t.name));
 
-  // 3. Fetch entire dictionary concurrently (Massive speed boost)
+  // 3. Fetch entire dictionary concurrently
   let dictRaw = [];
   if (tableNameSet.size > 0) {
     try {
@@ -182,7 +199,7 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
     }
   }
 
-  // 4. In-Memory Mapping (Instantaneous)
+  // 4. In-Memory Mapping
   const columnsByTable = {};
   for (const col of dictRaw) {
     if (!col.element) continue; 
@@ -230,7 +247,7 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
 
 export async function fetchServiceNowTableData(instanceUrl, username, password, tableName, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
-  const client = buildClient(url, username, password);
+  const client = await buildSessionClient(url, username, password);
   const limit = opts.limit ?? 1000;
 
   const params = { sysparm_limit: limit, sysparm_display_value: false, sysparm_exclude_reference_link: true };
@@ -252,7 +269,7 @@ export async function fetchServiceNowTableData(instanceUrl, username, password, 
 
 export async function fetchServiceNowTableArtifacts(instanceUrl, username, password, tableName) {
   const url = normaliseInstanceUrl(instanceUrl);
-  const client = buildClient(url, username, password);
+  const client = await buildSessionClient(url, username, password);
 
   try {
     const [brRes, csRes, uiRes, wfRes, siRes] = await Promise.allSettled([
