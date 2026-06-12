@@ -19,13 +19,54 @@ const state = {
 function $(id) { return document.getElementById(id); }
 function escHtml(str) { return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
+// ── Global Credential State Management ─────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadGlobalCredentials();
+});
+
 function saveGlobalCredentials() {
   state.credentials.url = $('g-url').value.trim();
   state.credentials.user = $('g-user').value.trim();
   state.credentials.pass = $('g-pass').value;
+  
+  localStorage.setItem('sn_global_creds', JSON.stringify(state.credentials));
+  
   const status = $('cred-status');
+  status.style.color = '#2ecc71';
+  status.innerText = 'Credentials Saved!';
   status.style.display = 'block';
   setTimeout(() => status.style.display = 'none', 3000);
+}
+
+function loadGlobalCredentials() {
+  const stored = localStorage.getItem('sn_global_creds');
+  if (stored) {
+    try {
+      state.credentials = JSON.parse(stored);
+      $('g-url').value = state.credentials.url || '';
+      $('g-user').value = state.credentials.user || '';
+      $('g-pass').value = state.credentials.pass || '';
+    } catch (e) {
+      console.error("Failed to parse saved credentials.");
+    }
+  }
+}
+
+function clearGlobalCredentials() {
+  localStorage.removeItem('sn_global_creds');
+  state.credentials = { url: '', user: '', pass: '' };
+  $('g-url').value = '';
+  $('g-user').value = '';
+  $('g-pass').value = '';
+  
+  const status = $('cred-status');
+  status.style.color = '#e74c3c';
+  status.innerText = 'Credentials Cleared!';
+  status.style.display = 'block';
+  setTimeout(() => {
+    status.style.display = 'none';
+    status.style.color = '#2ecc71'; // reset for next save
+  }, 3000);
 }
 
 // ── Pipeline Wizard Logic ──────────────────────────────────────────────────
@@ -677,7 +718,7 @@ async function runDuplicateFinder() {
   try {
     const fd = buildPayload();
     const cols = $('ws-opt-cols').value.trim();
-    fd.append('check_columns', JSON.stringify(cols ? cols.split(',').map(c=>c.trim()) : []));
+    fd.append('check_columns', JSON.stringify(cols ? cols.split(',').map(c=>c.trim()).filter(Boolean) : []));
     const res = await fetch('/api/find-duplicates', { method: 'POST', body: fd });
     if (!res.ok) throw new Error(await extractError(res));
     triggerDownload(await res.blob(), 'deduplicated.xlsx');
