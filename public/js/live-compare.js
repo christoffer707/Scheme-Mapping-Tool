@@ -100,9 +100,9 @@ async function apiPost(endpoint, body) {
   return data;
 }
 
-// ── Credential Memory ──────────────────────────────────────────────────────
+// ── Credential & State Memory ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  // Load saved creds for inst1 and inst2
+  // Load saved creds & cache for inst1 and inst2
   [1, 2].forEach(n => {
     const saved = localStorage.getItem(`sn_live_cred_${n}`);
     if (saved) {
@@ -113,7 +113,6 @@ document.addEventListener('DOMContentLoaded', () => {
         $(`inst${n}-pass`).value = parsed.pass || '';
       } catch(e) {}
     } else if (n === 1) {
-      // Auto-fill Inst 1 with global creds from the Compare tab if available
       const global = localStorage.getItem('sn_global_creds');
       if (global) {
         try {
@@ -124,6 +123,21 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch(e) {}
       }
     }
+
+    // Auto-Restore Cached Schema from Session Storage
+    const cachedLc = sessionStorage.getItem(`sn_lc_cache_${n}`);
+    const currentUrl = $(`inst${n}-url`).value.trim();
+    if (cachedLc && currentUrl) {
+      try {
+        const parsed = JSON.parse(cachedLc);
+        if (parsed.url === currentUrl && parsed.schema) {
+          buildInstanceUI(n, parsed.schema, currentUrl);
+          showAlert(`alert-inst${n}`, 'success', `Restored connection to ${currentUrl} from memory.`);
+        }
+      } catch(e) {
+        console.warn("Could not restore instance cache from session storage.");
+      }
+    }
   });
 });
 
@@ -132,7 +146,6 @@ function getCredentials(n) {
   const user = $(`inst${n}-user`).value.trim();
   const pass = $(`inst${n}-pass`).value;
   
-  // Auto-save to session memory
   localStorage.setItem(`sn_live_cred_${n}`, JSON.stringify({ url, user, pass }));
   
   return {
@@ -272,11 +285,11 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
     physics: { enabled: !isLargeGraph },
     layout: { improvedLayout: false },
     interaction: {
-      navigationButtons: true, // Forces zoom buttons to appear
+      navigationButtons: true, 
       keyboard: false,
-      zoomView: true,          // Ensures mouse wheel scroll works
+      zoomView: true,          
       hideEdgesOnDrag: isLargeGraph,
-      hideEdgesOnZoom: false   // Disabled so lines don't vanish when scrolling
+      hideEdgesOnZoom: false   
     },
     nodes: { borderWidth: 1, shadow: !isLargeGraph },
     edges: { width: 1, selectionWidth: 2 }
@@ -371,7 +384,6 @@ function focusTableOnInstance(n, targetTableName, schema, highlights, tables) {
   const network = state[`inst${n}`].network;
   network.setData({ nodes, edges });
   
-  // Re-enable physics for placement, but ensure navigation/zoom buttons persist!
   network.setOptions({
     physics: {
       enabled: true, solver: 'forceAtlas2Based',
@@ -382,9 +394,9 @@ function focusTableOnInstance(n, targetTableName, schema, highlights, tables) {
       hover: true, 
       dragNodes: true, 
       hideEdgesOnDrag: true,
-      navigationButtons: true, // Retain Zoom Buttons
-      zoomView: true,          // Retain Scroll Zoom
-      hideEdgesOnZoom: false   // Prevent lines from vanishing on scroll
+      navigationButtons: true, 
+      zoomView: true,          
+      hideEdgesOnZoom: false   
     }
   });
 
@@ -482,6 +494,42 @@ function wireTableSearch(searchId, listId, tables, highlights, n) {
   });
 }
 
+function buildInstanceUI(n, schema, url) {
+  state[`inst${n}`].schema      = schema;
+  state[`inst${n}`].connected   = true;
+
+  const filterType  = state[`inst${n}`].filterType  || 'all';
+  const searchQuery = state[`inst${n}`].searchQuery || '';
+
+  const totalTables    = schema.total_tables    ?? (schema.raw_tables || schema.tables).length;
+  const filteredTables = filterTables(schema, filterType, searchQuery);
+
+  setStatus(`inst${n}`, 'connected', `✓ Connected — ${totalTables} tables`);
+
+  const card = $(`card-inst${n}`);
+  if (card) {
+    card.classList.add('connected');
+    if (n === 2) card.classList.remove('inst2'); 
+  }
+
+  updateErdCounter(n, filteredTables.length, totalTables);
+
+  hideEl(`erd-ph-inst${n}`);
+  showEl(`erd-net-inst${n}`);
+  
+  if (state[`inst${n}`].network) state[`inst${n}`].network.destroy();
+  state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`, n);
+
+  const allTables = schema.raw_tables || schema.tables || [];
+  showEl(`table-list-inst${n}-wrap`);
+  $(`table-count-inst${n}`).textContent = allTables.length;
+  renderTableList(`table-list-inst${n}`, allTables, {}, n);
+  wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, allTables, {}, n);
+
+  wireErdFilter(n);
+  updateActionBar();
+}
+
 async function connectInstance(n) {
   const prefix = `inst${n}`;
   const creds  = getCredentials(n);
@@ -506,42 +554,16 @@ async function connectInstance(n) {
     });
 
     stopFakeProgress(prefix, tid, true);
-    state[`inst${n}`].schema      = schema;
-    state[`inst${n}`].connected   = true;
+    
+    try {
+      sessionStorage.setItem(`sn_lc_cache_${n}`, JSON.stringify({ url: creds.instance_url, schema }));
+    } catch(e) { console.warn("Schema too large to save to session storage."); }
 
-    const filterType  = state[`inst${n}`].filterType  || 'all';
-    const searchQuery = state[`inst${n}`].searchQuery || '';
-
-    const totalTables    = schema.total_tables    ?? (schema.raw_tables || schema.tables).length;
-    const filteredTables = filterTables(schema, filterType, searchQuery);
-
-    setStatus(`inst${n}`, 'connected', `✓ Connected — ${totalTables} tables`);
-
-    const card = $(`card-inst${n}`);
-    if (card) {
-      card.classList.add('connected');
-      if (n === 2) card.classList.remove('inst2'); 
-    }
-
-    updateErdCounter(n, filteredTables.length, totalTables);
-
-    hideEl(`erd-ph-inst${n}`);
-    showEl(`erd-net-inst${n}`);
-    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`, n);
-
-    const allTables = schema.raw_tables || schema.tables || [];
-    showEl(`table-list-inst${n}-wrap`);
-    $(`table-count-inst${n}`).textContent = allTables.length;
-    renderTableList(`table-list-inst${n}`, allTables, {}, n);
-    wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, allTables, {}, n);
-
-    wireErdFilter(n);
+    buildInstanceUI(n, schema, creds.instance_url);
 
     showAlert(`alert-inst${n}`, 'success',
-      `Connected to ${creds.instance_url}. Showing ${filteredTables.length} of ${totalTables} tables.`
+      `Connected to ${creds.instance_url}. Showing ${filterTables(schema, 'all', '').length} of ${schema.total_tables ?? (schema.raw_tables || schema.tables).length} tables.`
     );
-
-    updateActionBar();
   } catch (err) {
     stopFakeProgress(prefix, tid, false);
     setStatus(`inst${n}`, 'error', '✗ Error');
