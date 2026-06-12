@@ -39,35 +39,66 @@ async function getDataFrame(req) {
   throw new Error("No data source provided. Upload a file or provide instance credentials and a table name.");
 }
 
+// ── NEW: Guided Pipeline Runner ────────────────────────────────────────────
+router.post('/run-pipeline', upload.single('file'), async (req, res) => {
+  try {
+    let df = await getDataFrame(req);
+    if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
+
+    let transforms = [];
+    try { transforms = JSON.parse(req.body.transforms || '[]'); } catch {}
+
+    // Apply queued transformations sequentially in memory
+    for (const t of transforms) {
+      if (t.type === 'normalize' && t.columns.length > 0) {
+        df = normalizeColumns(df, t.columns, t.action);
+      } else if (t.type === 'drop' && t.columns.length > 0) {
+        df = columnOperations(df, { drop: t.columns, rename: {} });
+      }
+    }
+
+    const postAnalysis = analyzeDataFrame(df);
+
+    const reportData = [
+      { Metric: 'Pipeline Execution Date', Value: new Date().toISOString() },
+      { Metric: 'Final Row Count', Value: postAnalysis.overview.row_count },
+      { Metric: 'Final Column Count', Value: postAnalysis.overview.column_count },
+      { Metric: 'Remaining Duplicates', Value: postAnalysis.overview.duplicate_rows },
+      { Metric: 'Remaining Nulls', Value: postAnalysis.overview.total_nulls },
+      { Metric: 'Transformations Applied', Value: transforms.length }
+    ];
+
+    const sheets = {
+      'Cleaned Data': df,
+      'Pipeline Report': reportData
+    };
+
+    const xlsxBuffer = await buildExcelReport(sheets);
+    const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="pipeline_export_${fileName}.xlsx"`);
+    res.send(Buffer.from(xlsxBuffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // ── Document Conversion ────────────────────────────────────────────────────
 router.post('/pdf-to-word', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Please upload a PDF file.' });
-    
-    // 1. Parse text from PDF
     const pdfData = await pdfParse(req.file.buffer);
     const lines = pdfData.text.split('\n');
-
-    // 2. Build Word Document
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: lines.map(line => new Paragraph({ children: [new TextRun(line)] }))
-      }]
-    });
-
-    // 3. Export as .docx buffer
+    const doc = new Document({ sections: [{ properties: {}, children: lines.map(line => new Paragraph({ children: [new TextRun(line)] })) }] });
     const b64string = await Packer.toBase64String(doc);
     const buffer = Buffer.from(b64string, 'base64');
-
     const fileName = req.file.originalname.replace(/\.[^.]+$/, '');
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}.docx"`);
     res.send(buffer);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Data Merge / Join ──────────────────────────────────────────────────────
@@ -91,26 +122,17 @@ router.post('/merge-data', upload.fields([{ name: 'file1', maxCount: 1 }, { name
         return result.rows;
       }
     };
-
-    const df1 = await getDF('1');
-    const df2 = await getDF('2');
-
+    const df1 = await getDF('1'); const df2 = await getDF('2');
     if (df1.length === 0 || df2.length === 0) return res.status(400).json({ error: 'One or both data sources returned 0 rows.' });
-
     const { key1, key2, join_type } = req.body;
     if (!key1 || !key2) return res.status(400).json({ error: 'Join Keys for both sources are required.' });
-
     const merged = dataMergeJoin(df1, df2, key1, key2, join_type || 'left');
-
     const sheets = { 'Merged Data': merged };
     const xlsxBuffer = await buildExcelReport(sheets);
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="merged_data.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Existing Single-Source Endpoints ───────────────────────────────────────
