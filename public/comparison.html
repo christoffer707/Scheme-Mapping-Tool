@@ -23,8 +23,8 @@
     
     .form-group { margin-bottom: 12px; }
     label { display: block; font-size: 12px; font-weight: 600; color: #a0aec0; margin-bottom: 6px; }
-    input[type="text"], input[type="password"], input[type="number"] { width: 100%; padding: 10px; background: #0b0c10; border: 1px solid #2d3142; border-radius: 6px; font-size: 13px; color: #fff; outline: none; transition: border-color .15s; }
-    input:focus { border-color: #0066cc; }
+    input[type="text"], input[type="password"], input[type="number"], select { width: 100%; padding: 10px; background: #0b0c10; border: 1px solid #2d3142; border-radius: 6px; font-size: 13px; color: #fff; outline: none; transition: border-color .15s; }
+    input:focus, select:focus { border-color: #0066cc; }
     .btn-save { background: #1a7a4a; color: white; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; width: 100%; transition: background 0.2s; }
     .btn-save:hover { background: #155f3a; }
     #cred-status { font-size: 12px; color: #2ecc71; margin-top: 8px; display: none; font-weight: 600; text-align: center; }
@@ -145,9 +145,15 @@
           <h4>Data Anonymizer</h4>
           <p>Anonymize sensitive data (emails, SSNs, IPs) while preserving data relationships and referential integrity.</p>
         </div>
-        <div class="tool-card disabled">
+        <div class="tool-card" onclick="openTool('column-normalizer')">
+          <div class="tool-icon" style="color:#f472b6;">🎛️</div>
+          <h4>Column Normalizer</h4>
+          <p>Cleanse and standardize string columns instantly (trim whitespace, force casing, remove special characters).</p>
+        </div>
+        <div class="tool-card" onclick="openTool('file-splitter')">
           <div class="tool-icon" style="color:#f472b6;">✂️</div>
-          <h4>File Splitter</h4><p>Split large files into smaller chunks for ERP loads with custom logic. (Coming soon)</p>
+          <h4>File Splitter</h4>
+          <p>Split massive files or live table pulls into safe, smaller chunks (Excel sheets) for ServiceNow importing.</p>
         </div>
       </div>
     </div>
