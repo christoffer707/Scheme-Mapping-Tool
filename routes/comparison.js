@@ -1,7 +1,6 @@
 /**
  * routes/comparison.js
  * Express router for all comparison, analysis, and scrubbing endpoints.
- * Mounts at /api in server.js.
  */
 
 import { Router } from 'express';
@@ -31,7 +30,6 @@ const upload = multer({
 });
 
 // ── Universal Data Source Handler ──────────────────────────────────────────
-// Resolves a DataFrame from either an uploaded file OR a live ServiceNow query
 async function getDataFrame(req) {
   if (req.file) {
     return await parseFileBuffer(req.file.buffer, req.file.originalname);
@@ -44,7 +42,7 @@ async function getDataFrame(req) {
   throw new Error("No data source provided. Upload a file or provide instance credentials and a table name.");
 }
 
-// ── Duplicate Finder (New Dual-Mode Endpoint) ──────────────────────────────
+// ── Duplicate Finder ───────────────────────────────────────────────────────
 router.post('/find-duplicates', upload.single('file'), async (req, res) => {
   try {
     let checkColumns = [];
@@ -53,15 +51,12 @@ router.post('/find-duplicates', upload.single('file'), async (req, res) => {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
 
-    // If no specific columns selected, use all columns
     const colsToCompare = checkColumns.length > 0 ? checkColumns : Object.keys(df[0]);
-
     const seen = new Set();
     const uniqueRows = [];
     const duplicateRows = [];
 
     for (const row of df) {
-      // Build a composite hash of the selected columns to detect exact matches
       const hash = colsToCompare.map(c => String(row[c] ?? '')).join('||');
       if (seen.has(hash)) {
         duplicateRows.push(row);
@@ -71,11 +66,7 @@ router.post('/find-duplicates', upload.single('file'), async (req, res) => {
       }
     }
 
-    const sheets = {
-      'Unique Data': uniqueRows,
-      'Removed Duplicates': duplicateRows
-    };
-
+    const sheets = { 'Unique Data': uniqueRows, 'Removed Duplicates': duplicateRows };
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
 
@@ -87,7 +78,7 @@ router.post('/find-duplicates', upload.single('file'), async (req, res) => {
   }
 });
 
-// ── Anonymizer / Scrub Data (Updated to Dual-Mode) ─────────────────────────
+// ── Anonymizer / Scrub Data ───────────────────────────────────────────────
 router.post('/scrub-data', upload.single('file'), async (req, res) => {
   try {
     let columnsToScrub = [];
@@ -125,11 +116,42 @@ router.post('/scrub-data', upload.single('file'), async (req, res) => {
   }
 });
 
-// Keep existing routes exactly the same
+// ── Analyze Data ───────────────────────────────────────────────────────────
+router.post('/analyze-data', upload.single('file'), async (req, res) => {
+  try {
+    const df = await getDataFrame(req);
+    if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
+    
+    const analysis = analyzeDataFrame(df);
+    const fileName = req.file ? req.file.originalname : req.body.table_name;
+    res.json({ success: true, file_name: fileName, ...analysis });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Find Natural Keys ──────────────────────────────────────────────────────
+router.post('/find-keys', upload.single('file'), async (req, res) => {
+  try {
+    let selectedColumns = [];
+    try { selectedColumns = JSON.parse(req.body.selected_columns || '[]'); } catch { /* ignore */ }
+    
+    const df = await getDataFrame(req);
+    if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
+    
+    const result = findNaturalKeys(df, selectedColumns);
+    const fileName = req.file ? req.file.originalname : req.body.table_name;
+    res.json({ success: true, file_name: fileName, row_count: df.length, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Schema and Data comparison routes remain file-only for now on this specific dashboard 
+// (Live Compare handles the live API version of these).
 router.post('/compare/schemas', upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]), async (req, res) => {
   try {
-    const f1 = req.files?.file1?.[0];
-    const f2 = req.files?.file2?.[0];
+    const f1 = req.files?.file1?.[0]; const f2 = req.files?.file2?.[0];
     if (!f1 || !f2) return res.status(400).json({ error: 'Both file1 and file2 are required.' });
     const df1 = await parseFileBuffer(f1.buffer, f1.originalname);
     const df2 = await parseFileBuffer(f2.buffer, f2.originalname);
@@ -140,40 +162,16 @@ router.post('/compare/schemas', upload.fields([{ name: 'file1', maxCount: 1 }, {
 
 router.post('/compare/data', upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]), async (req, res) => {
   try {
-    const f1 = req.files?.file1?.[0];
-    const f2 = req.files?.file2?.[0];
+    const f1 = req.files?.file1?.[0]; const f2 = req.files?.file2?.[0];
     if (!f1 || !f2) return res.status(400).json({ error: 'Both files are required.' });
-
     let keyColumns = []; let compareColumns = [];
     try { keyColumns = JSON.parse(req.body.key_columns || '[]'); } catch {}
     try { compareColumns = JSON.parse(req.body.compare_columns || '[]'); } catch {}
     if (keyColumns.length === 0) return res.status(400).json({ error: 'key_columns is required.' });
-
     const df1 = await parseFileBuffer(f1.buffer, f1.originalname);
     const df2 = await parseFileBuffer(f2.buffer, f2.originalname);
     const result = compareData(df1, df2, keyColumns, compareColumns);
-
     res.json({ success: true, file1_name: f1.originalname, file2_name: f2.originalname, key_columns: keyColumns, ...result });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.post('/analyze-data', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'A file is required.' });
-    const df = await parseFileBuffer(req.file.buffer, req.file.originalname);
-    const analysis = analyzeDataFrame(df);
-    res.json({ success: true, file_name: req.file.originalname, ...analysis });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.post('/find-keys', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'A file is required.' });
-    let selectedColumns = [];
-    try { selectedColumns = JSON.parse(req.body.selected_columns || '[]'); } catch {}
-    const df = await parseFileBuffer(req.file.buffer, req.file.originalname);
-    const result = findNaturalKeys(df, selectedColumns);
-    res.json({ success: true, file_name: req.file.originalname, row_count: df.length, ...result });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
