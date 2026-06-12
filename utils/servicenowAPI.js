@@ -23,9 +23,7 @@ export function normaliseInstanceUrl(raw) {
 }
 
 /**
- * Executes a single initial request with the Password/MFA token to establish a session.
- * It then extracts the JSESSIONID cookie and attaches it to all future concurrent requests
- * so the MFA token doesn't get flagged as a "Replay Attack".
+ * Executes a single initial request to establish a session and bypass MFA Replay limits.
  */
 async function buildSessionClient(instanceUrl, username, password) {
   const base = instanceUrl.replace(/\/+$/, ''); 
@@ -35,31 +33,30 @@ async function buildSessionClient(instanceUrl, username, password) {
     timeout: 120_000,
   });
 
-  // 1. Fire exactly ONE request to validate the MFA token
   const res = await client.get('/api/now/table/sys_db_object', {
     params: { sysparm_limit: 1, sysparm_fields: 'name' },
     auth: { username, password }
   });
 
-  // 2. Extract the session cookies
   const cookies = res.headers['set-cookie'];
   if (cookies) {
-    // Strip out the metadata (Path=/, HttpOnly) and join the raw cookies
     client.defaults.headers.common['Cookie'] = cookies.map(c => c.split(';')[0]).join('; ');
   } else {
-    // Failsafe: Fallback to basic auth if cookies are disabled
     client.defaults.auth = { username, password };
   }
 
   return client;
 }
 
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // ---------------------------------------------------------------------------
-// High-Performance Concurrent Fetcher
+// High-Performance Concurrent Fetcher (With Throttling & Self-Healing)
 // ---------------------------------------------------------------------------
-async function fastFetchAll(client, endpoint, query, fields) {
+async function fastFetchAll(instanceUrl, username, password, initialClient, endpoint, query, fields) {
   const PAGE_SIZE = 2500; 
   let total = NaN;
+  let currentClient = initialClient;
   
   const baseParams = {
     sysparm_exclude_reference_link: true,
@@ -68,7 +65,7 @@ async function fastFetchAll(client, endpoint, query, fields) {
   if (query) baseParams.sysparm_query = query;
 
   try {
-    const initial = await client.get(endpoint, {
+    const initial = await currentClient.get(endpoint, {
       params: { ...baseParams, sysparm_limit: 1 }
     });
     if (initial.headers['x-total-count']) {
@@ -80,6 +77,25 @@ async function fastFetchAll(client, endpoint, query, fields) {
 
   const results = [];
 
+  // Helper function to fetch a chunk with built-in retry logic
+  const fetchChunk = async (offset, retries = 1) => {
+    try {
+      const res = await currentClient.get(endpoint, {
+        params: { ...baseParams, sysparm_limit: PAGE_SIZE, sysparm_offset: offset }
+      });
+      return res.data?.result || [];
+    } catch (e) {
+      if (e.response?.status === 401 && retries > 0) {
+        console.log(`[FastFetch] 401 at offset ${offset}. Session killed by firewall. Healing session...`);
+        // Regenerate the cookie and try exactly one more time
+        currentClient = await buildSessionClient(instanceUrl, username, password);
+        return fetchChunk(offset, retries - 1);
+      }
+      console.error(`[FastFetch] Batch failed at offset ${offset}:`, e.message);
+      return [];
+    }
+  };
+
   if (!isNaN(total) && total > 0) {
     console.log(`[FastFetch] ${endpoint} total records: ${total}. Fetching concurrently...`);
     const offsets = [];
@@ -88,24 +104,19 @@ async function fastFetchAll(client, endpoint, query, fields) {
     const CONCURRENCY = 3; 
     for (let i = 0; i < offsets.length; i += CONCURRENCY) {
       const batch = offsets.slice(i, i + CONCURRENCY);
-      const promises = batch.map(offset => client.get(endpoint, {
-        params: { ...baseParams, sysparm_limit: PAGE_SIZE, sysparm_offset: offset }
-      }).then(res => res.data?.result || []).catch(e => {
-        console.error(`[FastFetch] Batch failed at offset ${offset}:`, e.message);
-        return [];
-      }));
+      const promises = batch.map(offset => fetchChunk(offset));
       
       const batchRes = await Promise.all(promises);
       batchRes.forEach(arr => results.push(...arr));
+      
+      // THROTTLE: Give ServiceNow 200ms to breathe so we don't trip the WAF
+      await delay(200);
     }
   } else {
     console.log(`[FastFetch] ${endpoint} falling back to sequential fetch...`);
     let offset = 0;
     while (true) {
-      const res = await client.get(endpoint, {
-        params: { ...baseParams, sysparm_limit: PAGE_SIZE, sysparm_offset: offset }
-      });
-      const page = res.data?.result || [];
+      const page = await fetchChunk(offset);
       results.push(...page);
       if (page.length < PAGE_SIZE) break;
       offset += PAGE_SIZE;
@@ -121,7 +132,6 @@ async function fastFetchAll(client, endpoint, query, fields) {
 export async function testServiceNowConnection(instanceUrl, username, password) {
   const url = normaliseInstanceUrl(instanceUrl);
   try {
-    // Building the session client inherently tests the connection and MFA
     await buildSessionClient(url, username, password);
     return { success: true, instance_url: url };
   } catch (err) {
@@ -156,7 +166,6 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
 }
 
 async function fetchServiceNowSchemaInternal(url, username, password, opts) {
-  // Use the session client to bypass MFA Replay limits
   const client = await buildSessionClient(url, username, password);
   
   const tableLimit  = opts.tableLimit ?? Infinity;
@@ -165,7 +174,7 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
   // 1. Fetch all tables concurrently
   let allTablesRaw = [];
   try {
-    allTablesRaw = await fastFetchAll(client, '/api/now/table/sys_db_object', '', 'name,label,sys_id,super_class');
+    allTablesRaw = await fastFetchAll(url, username, password, client, '/api/now/table/sys_db_object', '', 'name,label,sys_id,super_class');
   } catch (err) {
     throw new Error(`Failed to fetch table list: ${err.message}`);
   }
@@ -193,7 +202,7 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
   let dictRaw = [];
   if (tableNameSet.size > 0) {
     try {
-      dictRaw = await fastFetchAll(client, '/api/now/table/sys_dictionary', 'internal_type!=collection', 'name,element,label,internal_type,reference,mandatory,max_length');
+      dictRaw = await fastFetchAll(url, username, password, client, '/api/now/table/sys_dictionary', 'internal_type!=collection', 'name,element,label,internal_type,reference,mandatory,max_length');
     } catch (err) {
       console.error("Dictionary fetch error:", err.message);
     }
