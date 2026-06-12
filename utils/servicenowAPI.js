@@ -11,8 +11,18 @@ import axios from 'axios';
 const BACKEND_SCHEMA_CACHE = new Map();
 
 // ---------------------------------------------------------------------------
-// Helpers & Session Management
+// Helpers
 // ---------------------------------------------------------------------------
+
+function buildClient(instanceUrl, username, password) {
+  const base = instanceUrl.replace(/\/+$/, ''); 
+  return axios.create({
+    baseURL: base,
+    auth: { username, password },
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    timeout: 120_000,
+  });
+}
 
 export function normaliseInstanceUrl(raw) {
   const s = (raw || '').trim();
@@ -22,41 +32,12 @@ export function normaliseInstanceUrl(raw) {
   throw new Error(`Invalid instance URL: "${s}". Provide a full URL or a bare instance name.`);
 }
 
-/**
- * Executes a single initial request to establish a session and bypass MFA Replay limits.
- */
-async function buildSessionClient(instanceUrl, username, password) {
-  const base = instanceUrl.replace(/\/+$/, ''); 
-  const client = axios.create({
-    baseURL: base,
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    timeout: 120_000,
-  });
-
-  const res = await client.get('/api/now/table/sys_db_object', {
-    params: { sysparm_limit: 1, sysparm_fields: 'name' },
-    auth: { username, password }
-  });
-
-  const cookies = res.headers['set-cookie'];
-  if (cookies) {
-    client.defaults.headers.common['Cookie'] = cookies.map(c => c.split(';')[0]).join('; ');
-  } else {
-    client.defaults.auth = { username, password };
-  }
-
-  return client;
-}
-
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
 // ---------------------------------------------------------------------------
-// High-Performance Concurrent Fetcher (With Throttling & Self-Healing)
+// High-Performance Concurrent Fetcher
 // ---------------------------------------------------------------------------
-async function fastFetchAll(instanceUrl, username, password, initialClient, endpoint, query, fields) {
+async function fastFetchAll(client, endpoint, query, fields) {
   const PAGE_SIZE = 2500; 
   let total = NaN;
-  let currentClient = initialClient;
   
   const baseParams = {
     sysparm_exclude_reference_link: true,
@@ -65,7 +46,7 @@ async function fastFetchAll(instanceUrl, username, password, initialClient, endp
   if (query) baseParams.sysparm_query = query;
 
   try {
-    const initial = await currentClient.get(endpoint, {
+    const initial = await client.get(endpoint, {
       params: { ...baseParams, sysparm_limit: 1 }
     });
     if (initial.headers['x-total-count']) {
@@ -77,25 +58,6 @@ async function fastFetchAll(instanceUrl, username, password, initialClient, endp
 
   const results = [];
 
-  // Helper function to fetch a chunk with built-in retry logic
-  const fetchChunk = async (offset, retries = 1) => {
-    try {
-      const res = await currentClient.get(endpoint, {
-        params: { ...baseParams, sysparm_limit: PAGE_SIZE, sysparm_offset: offset }
-      });
-      return res.data?.result || [];
-    } catch (e) {
-      if (e.response?.status === 401 && retries > 0) {
-        console.log(`[FastFetch] 401 at offset ${offset}. Session killed by firewall. Healing session...`);
-        // Regenerate the cookie and try exactly one more time
-        currentClient = await buildSessionClient(instanceUrl, username, password);
-        return fetchChunk(offset, retries - 1);
-      }
-      console.error(`[FastFetch] Batch failed at offset ${offset}:`, e.message);
-      return [];
-    }
-  };
-
   if (!isNaN(total) && total > 0) {
     console.log(`[FastFetch] ${endpoint} total records: ${total}. Fetching concurrently...`);
     const offsets = [];
@@ -104,19 +66,27 @@ async function fastFetchAll(instanceUrl, username, password, initialClient, endp
     const CONCURRENCY = 3; 
     for (let i = 0; i < offsets.length; i += CONCURRENCY) {
       const batch = offsets.slice(i, i + CONCURRENCY);
-      const promises = batch.map(offset => fetchChunk(offset));
+      const promises = batch.map(offset => client.get(endpoint, {
+        params: { ...baseParams, sysparm_limit: PAGE_SIZE, sysparm_offset: offset }
+      }).then(res => res.data?.result || []).catch(e => {
+        console.error(`[FastFetch] Batch failed at offset ${offset}:`, e.message);
+        return [];
+      }));
       
       const batchRes = await Promise.all(promises);
       batchRes.forEach(arr => results.push(...arr));
       
-      // THROTTLE: Give ServiceNow 200ms to breathe so we don't trip the WAF
-      await delay(200);
+      // Tiny breather so we don't trip the firewall too quickly
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
   } else {
     console.log(`[FastFetch] ${endpoint} falling back to sequential fetch...`);
     let offset = 0;
     while (true) {
-      const page = await fetchChunk(offset);
+      const res = await client.get(endpoint, {
+        params: { ...baseParams, sysparm_limit: PAGE_SIZE, sysparm_offset: offset }
+      });
+      const page = res.data?.result || [];
       results.push(...page);
       if (page.length < PAGE_SIZE) break;
       offset += PAGE_SIZE;
@@ -131,13 +101,16 @@ async function fastFetchAll(instanceUrl, username, password, initialClient, endp
 
 export async function testServiceNowConnection(instanceUrl, username, password) {
   const url = normaliseInstanceUrl(instanceUrl);
+  const client = buildClient(url, username, password);
   try {
-    await buildSessionClient(url, username, password);
+    await client.get('/api/now/table/sys_db_object', {
+      params: { sysparm_limit: 1, sysparm_fields: 'name' },
+    });
     return { success: true, instance_url: url };
   } catch (err) {
     const status = err.response?.status;
     if (status === 401 || status === 403) {
-      return { success: false, instance_url: url, error: 'Authentication failed — check username, password, and MFA token.' };
+      return { success: false, instance_url: url, error: 'Authentication failed — check username and password.' };
     }
     return { success: false, instance_url: url, error: err.message };
   }
@@ -165,8 +138,9 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   return schema;
 }
 
+// Internal Fetcher
 async function fetchServiceNowSchemaInternal(url, username, password, opts) {
-  const client = await buildSessionClient(url, username, password);
+  const client = buildClient(url, username, password);
   
   const tableLimit  = opts.tableLimit ?? Infinity;
   const includeCore = opts.includeCore;
@@ -174,7 +148,7 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
   // 1. Fetch all tables concurrently
   let allTablesRaw = [];
   try {
-    allTablesRaw = await fastFetchAll(url, username, password, client, '/api/now/table/sys_db_object', '', 'name,label,sys_id,super_class');
+    allTablesRaw = await fastFetchAll(client, '/api/now/table/sys_db_object', '', 'name,label,sys_id,super_class');
   } catch (err) {
     throw new Error(`Failed to fetch table list: ${err.message}`);
   }
@@ -202,7 +176,7 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
   let dictRaw = [];
   if (tableNameSet.size > 0) {
     try {
-      dictRaw = await fastFetchAll(url, username, password, client, '/api/now/table/sys_dictionary', 'internal_type!=collection', 'name,element,label,internal_type,reference,mandatory,max_length');
+      dictRaw = await fastFetchAll(client, '/api/now/table/sys_dictionary', 'internal_type!=collection', 'name,element,label,internal_type,reference,mandatory,max_length');
     } catch (err) {
       console.error("Dictionary fetch error:", err.message);
     }
@@ -256,7 +230,7 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
 
 export async function fetchServiceNowTableData(instanceUrl, username, password, tableName, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
-  const client = await buildSessionClient(url, username, password);
+  const client = buildClient(url, username, password);
   const limit = opts.limit ?? 1000;
 
   const params = { sysparm_limit: limit, sysparm_display_value: false, sysparm_exclude_reference_link: true };
@@ -278,7 +252,7 @@ export async function fetchServiceNowTableData(instanceUrl, username, password, 
 
 export async function fetchServiceNowTableArtifacts(instanceUrl, username, password, tableName) {
   const url = normaliseInstanceUrl(instanceUrl);
-  const client = await buildSessionClient(url, username, password);
+  const client = buildClient(url, username, password);
 
   try {
     const [brRes, csRes, uiRes, wfRes, siRes] = await Promise.allSettled([
