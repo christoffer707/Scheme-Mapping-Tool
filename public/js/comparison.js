@@ -43,7 +43,6 @@ function openTool(toolId) {
   const optionsEl = $('ws-options');
   const stdHeader = $('ws-standard-header');
   
-  // Display standard header for everything EXCEPT merge tool
   if (toolId === 'data-merge') {
     stdHeader.style.display = 'none';
     optionsEl.style.padding = '0';
@@ -56,6 +55,14 @@ function openTool(toolId) {
     optionsEl.style.border = '1px solid #2d3142';
   }
   
+  // Disable Live Pull UI specifically for PDF tool
+  if (toolId === 'pdf-to-word') {
+     $('ws-toggles').style.display = 'none';
+     setMode('file');
+  } else {
+     $('ws-toggles').style.display = 'flex';
+  }
+
   if (toolId === 'duplicate-finder') {
     titleEl.innerText = 'Duplicate Finder';
     optionsEl.innerHTML = `
@@ -249,7 +256,6 @@ function openTool(toolId) {
     titleEl.innerText = 'Data Merge / Join';
     optionsEl.innerHTML = `
       <div style="display: flex; gap: 20px; flex-wrap: wrap;">
-        <!-- SOURCE A -->
         <div style="flex: 1; background: #1a1d29; border: 1px solid #2d3142; border-radius: 12px; padding: 24px; min-width: 300px;">
           <h4 style="margin-bottom:15px; color:#4da6ff;">Source A (Left Table)</h4>
           <div class="toggle-container" style="margin-bottom: 15px;">
@@ -274,7 +280,6 @@ function openTool(toolId) {
           </div>
         </div>
 
-        <!-- SOURCE B -->
         <div style="flex: 1; background: #1a1d29; border: 1px solid #2d3142; border-radius: 12px; padding: 24px; min-width: 300px;">
           <h4 style="margin-bottom:15px; color:#f472b6;">Source B (Right Table)</h4>
           <div class="toggle-container" style="margin-bottom: 15px;">
@@ -314,6 +319,12 @@ function openTool(toolId) {
     `;
     $('btn-run-tool').onclick = runDataMerge;
     $('btn-run-tool').innerText = 'Execute Join & Download';
+  }
+  else if (toolId === 'pdf-to-word') {
+    titleEl.innerText = 'PDF to Word';
+    optionsEl.innerHTML = `<p style="color:#8f9bb3; font-size:13px; margin:0;">Upload a PDF to extract its text and convert it into an editable Microsoft Word document.</p>`;
+    $('btn-run-tool').onclick = runPdfToWord;
+    $('btn-run-tool').innerText = 'Convert to .docx';
   }
 }
 
@@ -378,7 +389,32 @@ function buildPayload() {
   return fd;
 }
 
-// ── NEW: Data Merge / Join ─────────────────────────────────────────────────
+// ── NEW: PDF to Word ───────────────────────────────────────────────────────
+async function runPdfToWord() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Converting Document...';
+
+  try {
+    const file = $('ws-file').files[0];
+    if (!file) throw new Error("Please select a PDF file to upload.");
+    
+    const fd = new FormData();
+    fd.append('file', file);
+
+    const res = await fetch('/api/pdf-to-word', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), file.name.replace(/\.[^.]+$/, '') + '.docx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your converted Word document has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── Existing Tools ─────────────────────────────────────────────────────────
 async function runDataMerge() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -439,8 +475,6 @@ async function runDataMerge() {
     alertEl.innerHTML = `❌ Error: ${err.message}`;
   }
 }
-
-// ── Existing Tools ─────────────────────────────────────────────────────────
 
 async function runTransposeData() {
   const alertEl = $('ws-alert');
