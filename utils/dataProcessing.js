@@ -1,7 +1,6 @@
 /**
  * dataProcessing.js
- * Core data processing utilities for schema comparison, data diffing,
- * anonymization, type detection, natural key discovery, and analysis.
+ * Core data processing utilities.
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -175,7 +174,7 @@ export function normalizeColumns(df, columns, action) {
   });
 }
 
-// ── NEW: Find & Replace ────────────────────────────────────────────────────
+// ── Find & Replace ─────────────────────────────────────────────────────────
 export function findAndReplace(df, columns, searchStr, replaceStr, useRegex, matchCase) {
   let regex;
   if (useRegex) {
@@ -196,7 +195,7 @@ export function findAndReplace(df, columns, searchStr, replaceStr, useRegex, mat
   });
 }
 
-// ── NEW: Column Operations ─────────────────────────────────────────────────
+// ── Column Operations ──────────────────────────────────────────────────────
 export function columnOperations(df, ops) {
   return df.map(row => {
     const newRow = {};
@@ -204,6 +203,43 @@ export function columnOperations(df, ops) {
       if (ops.drop && ops.drop.includes(key)) continue;
       const newKey = (ops.rename && ops.rename[key]) ? ops.rename[key] : key;
       newRow[newKey] = row[key];
+    }
+    return newRow;
+  });
+}
+
+// ── NEW: Row Filter ────────────────────────────────────────────────────────
+export function rowFilter(df, col, op, val) {
+  return df.filter(row => {
+    const rv = String(row[col] || '').toLowerCase();
+    const cv = String(val || '').toLowerCase();
+    switch(op) {
+      case 'eq': return rv === cv;
+      case 'neq': return rv !== cv;
+      case 'contains': return rv.includes(cv);
+      case 'not_contains': return !rv.includes(cv);
+      case 'gt': return Number(row[col]) > Number(val);
+      case 'lt': return Number(row[col]) < Number(val);
+      case 'empty': return rv === '';
+      case 'not_empty': return rv !== '';
+      default: return true;
+    }
+  });
+}
+
+// ── NEW: Calculated Columns ────────────────────────────────────────────────
+export function calculatedColumns(df, newColumnName, expression) {
+  return df.map(row => {
+    const newRow = { ...row };
+    try {
+      // Replaces [column_name] with row['column_name']
+      // Example input: [price] * 1.2
+      // Safe scoped evaluation via Function constructor
+      let jsExpr = expression.replace(/\[([^\]]+)\]/g, "row['$1']");
+      const fn = new Function('row', `return ${jsExpr};`);
+      newRow[newColumnName] = fn(row);
+    } catch(e) {
+      newRow[newColumnName] = "ERROR: Invalid Formula";
     }
     return newRow;
   });
