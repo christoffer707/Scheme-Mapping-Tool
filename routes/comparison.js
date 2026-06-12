@@ -14,6 +14,8 @@ import {
   findNaturalKeys,
   parseFileBuffer,
   buildExcelReport,
+  splitDataFrame,
+  normalizeColumns
 } from '../utils/dataProcessing.js';
 
 const router = Router();
@@ -41,6 +43,56 @@ async function getDataFrame(req) {
   }
   throw new Error("No data source provided. Upload a file or provide instance credentials and a table name.");
 }
+
+// ── File Splitter ──────────────────────────────────────────────────────────
+router.post('/split-data', upload.single('file'), async (req, res) => {
+  try {
+    const df = await getDataFrame(req);
+    if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
+    
+    const chunkSize = parseInt(req.body.chunk_size, 10) || 5000;
+    const chunks = splitDataFrame(df, chunkSize);
+    
+    const sheets = {};
+    chunks.forEach((chunk, index) => {
+      sheets[`Chunk_${index + 1}`] = chunk;
+    });
+
+    const xlsxBuffer = await buildExcelReport(sheets);
+    const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="split_${fileName}.xlsx"`);
+    res.send(Buffer.from(xlsxBuffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Column Normalizer ──────────────────────────────────────────────────────
+router.post('/normalize-data', upload.single('file'), async (req, res) => {
+  try {
+    const df = await getDataFrame(req);
+    if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
+    
+    let columns = [];
+    try { columns = JSON.parse(req.body.columns || '[]'); } catch {}
+    if (columns.length === 0) return res.status(400).json({ error: 'Please specify at least one column.' });
+
+    const action = req.body.action || 'trim';
+    const normalizedData = normalizeColumns(df, columns, action);
+
+    const sheets = { 'Normalized Data': normalizedData };
+    const xlsxBuffer = await buildExcelReport(sheets);
+    const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="normalized_${fileName}.xlsx"`);
+    res.send(Buffer.from(xlsxBuffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── Duplicate Finder ───────────────────────────────────────────────────────
 router.post('/find-duplicates', upload.single('file'), async (req, res) => {
@@ -147,8 +199,7 @@ router.post('/find-keys', upload.single('file'), async (req, res) => {
   }
 });
 
-// Schema and Data comparison routes remain file-only for now on this specific dashboard 
-// (Live Compare handles the live API version of these).
+// Legacy File-Only Schemas
 router.post('/compare/schemas', upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]), async (req, res) => {
   try {
     const f1 = req.files?.file1?.[0]; const f2 = req.files?.file2?.[0];
