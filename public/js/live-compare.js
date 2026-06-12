@@ -1,20 +1,11 @@
-/**
- * live-compare.js
- * Frontend logic for the Live Dual-Instance Comparison page.
- * Handles credential input, API calls, ERD rendering, and results display.
- */
-
 'use strict';
 
-// ── State ──────────────────────────────────────────────────────────────────
 const state = {
   inst1: { schema: null, network: null, connected: false, filterType: 'all', searchQuery: '' },
   inst2: { schema: null, network: null, connected: false, filterType: 'all', searchQuery: '' },
   schemaCompareResult: null,
   dataCompareResult:   null,
 };
-
-// ── DOM helpers ────────────────────────────────────────────────────────────
 
 function $(id) { return document.getElementById(id); }
 
@@ -80,8 +71,6 @@ function setStatus(inst, cls, text) {
   el.textContent = text;
 }
 
-// ── Accordion ──────────────────────────────────────────────────────────────
-
 function toggleAccordion(id) {
   const body  = $(id);
   const key   = id.replace('acc-', '');
@@ -91,8 +80,6 @@ function toggleAccordion(id) {
   if (arrow) arrow.classList.toggle('open', open);
 }
 window.toggleAccordion = toggleAccordion;
-
-// ── API helpers ────────────────────────────────────────────────────────────
 
 async function apiPost(endpoint, body) {
   const res = await fetch(`/api/live/${endpoint}`, {
@@ -118,8 +105,6 @@ function validateCredentials(creds, label) {
   if (!creds.username)     throw new Error(`${label}: Username is required.`);
   if (!creds.password)     throw new Error(`${label}: Password is required.`);
 }
-
-// ── ERD Helpers ────────────────────────────────────────────────────────────
 
 function getTableType(tableName, tableObj) {
   if (tableName.startsWith('u_') || tableName.startsWith('x_')) return 'custom';
@@ -147,145 +132,163 @@ function filterTables(schema, filterType, searchQuery) {
   if (filterType === 'user_custom') {
     filtered = filtered.filter(t => t.name.startsWith('u_') || t.name.startsWith('x_'));
   } else if (filterType === 'with_relationships') {
-    const relatedNames = new Set(
-      (schema.relationships || []).flatMap(r => [r.from, r.to])
-    );
+    const relatedNames = new Set((schema.relationships || []).flatMap(r => [r.from, r.to]));
     filtered = filtered.filter(t => relatedNames.has(t.name));
   }
 
   if (searchQuery && searchQuery.trim()) {
     const q = searchQuery.trim().toLowerCase();
-    filtered = filtered.filter(t =>
-      t.name.toLowerCase().includes(q) ||
-      (t.label || '').toLowerCase().includes(q)
-    );
+    filtered = filtered.filter(t => t.name.toLowerCase().includes(q) || (t.label || '').toLowerCase().includes(q));
   }
-
   return filtered;
 }
 
-// ── ERD Rendering ──────────────────────────────────────────────────────────
+// ── ERD Rendering Engine ───────────────────────────────────────────────────
 
-function renderERD(containerId, schema, highlights = {}, tableList, noticeId) {
+function renderERD(containerId, schema, highlights = {}, tableList, noticeId, instanceNum) {
   const container = $(containerId);
   if (!container) return null;
 
-  const nodes = [];
-  const edges = [];
+  const tables = tableList || schema.tables || [];
+  const nodes = new vis.DataSet();
+  const edges = new vis.DataSet(); 
 
   const addedSet    = highlights.added    || new Set();
   const removedSet  = highlights.removed  || new Set();
   const modifiedSet = highlights.modified || new Set();
 
-  const tables = tableList || schema.tables || [];
-  const visibleTableNames = new Set(tables.map(t => t.name));
-
-  const isLargeGraph = tables.length > 200;
   const goldenAngle = 137.508 * (Math.PI / 180);
 
   tables.forEach((table, index) => {
     let bg, border;
-    if (addedSet.has(table.name)) {
-      bg = '#1a7a4a'; border = '#155f3a';
-    } else if (removedSet.has(table.name)) {
-      bg = '#c0392b'; border = '#a93226';
-    } else if (modifiedSet.has(table.name)) {
-      bg = '#d68910'; border = '#b7770d';
-    } else {
+    if (addedSet.has(table.name)) { bg = '#1a7a4a'; border = '#155f3a'; }
+    else if (removedSet.has(table.name)) { bg = '#c0392b'; border = '#a93226'; }
+    else if (modifiedSet.has(table.name)) { bg = '#d68910'; border = '#b7770d'; }
+    else {
       const c = getTableColor(table.name, table);
       bg = c.bg; border = c.border;
     }
 
-    const colCount = (schema.columns?.[table.name] || []).length;
-    let nodeProps = {
-      id:    table.name,
-      label: table.name,
-      title: `Table: ${table.name}\nColumns: ${colCount}`,
-      color: {
-        background: bg,
-        border,
-        highlight: { background: bg, border },
-        hover:     { background: bg, border },
-      },
-      font:  { color: '#ffffff', size: 10 },
-      shape: 'box',
-      margin: 6
-    };
+    const r = 30 * Math.sqrt(index);
+    const theta = index * goldenAngle;
 
-    // Apply Fermat's Spiral math if large
-    if (isLargeGraph) {
-      const r = 30 * Math.sqrt(index);
-      const theta = index * goldenAngle;
-      nodeProps.x = r * Math.cos(theta);
-      nodeProps.y = r * Math.sin(theta);
-    }
-
-    nodes.push(nodeProps);
+    nodes.add({
+      id: table.name, label: table.name, title: `Table: ${table.name}`,
+      x: r * Math.cos(theta), y: r * Math.sin(theta),
+      color: { background: bg, border }, font: { color: 'white', size: 10 },
+      shape: 'box', margin: 6
+    });
   });
 
-  if (!isLargeGraph) {
-    (schema.relationships || []).forEach(rel => {
-      if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
-      edges.push({
-        from:   rel.from,
-        to:     rel.to,
-        label:  rel.field,
-        arrows: 'to',
-        color:  { color: '#666666', highlight: '#00aaff', hover: '#00aaff' },
-        font:   { size: 9, color: '#aaaaaa', strokeWidth: 0 },
-        smooth: false
-      });
-    });
-  } else {
-    // Faint edges for big graphs
-    (schema.relationships || []).forEach(rel => {
-      if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
-      edges.push({
-        from:   rel.from,
-        to:     rel.to,
-        arrows: 'to',
-        color:  { color: 'rgba(136,136,136,0.3)', highlight: '#00aaff', hover: '#00aaff' },
-        smooth: false
-      });
-    });
-  }
-
-  const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
-
   const options = {
-    physics: { enabled: !isLargeGraph },
-    layout: { improvedLayout: false },
-    interaction: {
-      navigationButtons: true,
-      keyboard: false,
-      zoomView: true,
-      hideEdgesOnDrag: isLargeGraph,
-      hideEdgesOnZoom: isLargeGraph
-    },
-    nodes: { borderWidth: 1, shadow: !isLargeGraph },
-    edges: { width: 1, selectionWidth: 2 }
+    physics: { enabled: false },
+    interaction: { hideEdgesOnDrag: true, hideEdgesOnZoom: true, dragNodes: false }
   };
 
-  if (noticeId) {
-    const noticeEl = $(noticeId);
-    if (noticeEl) noticeEl.classList.toggle('visible', isLargeGraph);
-  }
+  const network = new vis.Network(container, { nodes, edges }, options);
+  network.fit();
 
-  const network = new vis.Network(container, data, options);
-
-  if (!isLargeGraph) {
-    network.once('stabilizationIterationsDone', () => {
-      network.setOptions({ physics: { enabled: false } });
-      network.fit();
-    });
-  } else {
-    network.fit();
-  }
+  network.on("click", (params) => {
+    if (params.nodes.length > 0) {
+      focusTableOnInstance(instanceNum, params.nodes[0], schema, highlights, tables);
+    }
+  });
 
   return network;
 }
 
-// ── Table list rendering ───────────────────────────────────────────────────
+function focusTableOnInstance(n, targetTableName, schema, highlights, tables) {
+  const btn = $(`btn-back-macro-inst${n}`);
+  if (btn) btn.classList.remove('hidden');
+
+  const addedSet    = highlights.added    || new Set();
+  const removedSet  = highlights.removed  || new Set();
+  const modifiedSet = highlights.modified || new Set();
+
+  const nodes = new vis.DataSet();
+  const edges = new vis.DataSet();
+  const addedNodes = new Set();
+  const validTables = new Set(tables.map(t=>t.name));
+
+  function addNode(tableName, isCenter = false) {
+    if (addedNodes.has(tableName)) return;
+    if (!validTables.has(tableName) && !addedSet.has(tableName) && !removedSet.has(tableName)) return;
+
+    let bg, border;
+    if (addedSet.has(tableName)) { bg = '#1a7a4a'; border = '#155f3a'; }
+    else if (removedSet.has(tableName)) { bg = '#c0392b'; border = '#a93226'; }
+    else if (modifiedSet.has(tableName)) { bg = '#d68910'; border = '#b7770d'; }
+    else {
+      const c = getTableColor(tableName); 
+      bg = c.bg; border = c.border;
+    }
+
+    nodes.add({
+      id: tableName, label: tableName,
+      color: { background: bg, border },
+      font: { color: 'white', size: isCenter ? 16 : 12 },
+      shape: 'box', margin: 10, borderWidth: isCenter ? 3 : 1, shadow: true
+    });
+    addedNodes.add(tableName);
+  }
+
+  addNode(targetTableName, true);
+
+  (schema.relationships || []).forEach(rel => {
+    if (rel.from === targetTableName || rel.to === targetTableName) {
+      addNode(rel.from === targetTableName ? rel.to : rel.from);
+      if (addedNodes.has(rel.from) && addedNodes.has(rel.to)) {
+          edges.add({
+            from: rel.from, to: rel.to, label: rel.field, arrows: 'to',
+            color: { color: '#00aaff', highlight: '#ff9900' }, width: 2,
+            font: { size: 11, color: '#111', background: '#ffffff', strokeWidth: 0, align: 'middle' },
+            smooth: { type: 'curvedCW', roundness: 0.15 } 
+          });
+      }
+    }
+  });
+
+  const network = state[`inst${n}`].network;
+  network.setData({ nodes, edges });
+  network.setOptions({
+    physics: {
+      enabled: true, solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -100, centralGravity: 0.01, springConstant: 0.08, springLength: 200 },
+      stabilization: { enabled: true, iterations: 150, updateInterval: 50 }
+    },
+    interaction: { hover: true, dragNodes: true, hideEdgesOnDrag: true }
+  });
+
+  network.once('stabilizationIterationsDone', () => {
+    network.setOptions({ physics: { enabled: false } });
+    network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+  });
+}
+
+window.resetToMacroView = function(n) {
+  const btn = $(`btn-back-macro-inst${n}`);
+  if (btn) btn.classList.add('hidden');
+  
+  const schema = state[`inst${n}`].schema;
+  const filterType = state[`inst${n}`].filterType;
+  const searchQuery = state[`inst${n}`].searchQuery;
+  
+  let highlights = {};
+  if (state.schemaCompareResult) {
+     const addedSet    = new Set((state.schemaCompareResult.added_tables    || []).map(t => t.name));
+     const removedSet  = new Set((state.schemaCompareResult.removed_tables || []).map(t => t.name));
+     const modifiedSet = new Set((state.schemaCompareResult.modified_tables || []).map(t => t.table));
+     if (n === 1) highlights = { removed: removedSet, modified: modifiedSet };
+     if (n === 2) highlights = { added: addedSet, modified: modifiedSet };
+  }
+
+  const filteredTables = filterTables(schema, filterType, searchQuery);
+  
+  if (state[`inst${n}`].network) {
+    state[`inst${n}`].network.destroy();
+  }
+  state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, highlights, filteredTables, `erd-large-notice-inst${n}`, n);
+}
 
 function renderTableList(listId, tables, highlights = {}) {
   const container = $(listId);
@@ -321,8 +324,6 @@ function renderTableList(listId, tables, highlights = {}) {
   });
 }
 
-// ── Table search filter ────────────────────────────────────────────────────
-
 function wireTableSearch(searchId, listId, tables, highlights) {
   const input = $(searchId);
   if (!input) return;
@@ -334,8 +335,6 @@ function wireTableSearch(searchId, listId, tables, highlights) {
     renderTableList(listId, filtered, highlights);
   });
 }
-
-// ── Connect instance ───────────────────────────────────────────────────────
 
 async function connectInstance(n) {
   const prefix = `inst${n}`;
@@ -375,15 +374,14 @@ async function connectInstance(n) {
     const card = $(`card-inst${n}`);
     if (card) {
       card.classList.add('connected');
-      if (n === 2) card.classList.remove('inst2'); // Fixed bug here!
+      if (n === 2) card.classList.remove('inst2'); 
     }
 
     updateErdCounter(n, filteredTables.length, totalTables);
 
     hideEl(`erd-ph-inst${n}`);
     showEl(`erd-net-inst${n}`);
-    const network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`);
-    state[`inst${n}`].network = network;
+    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`, n);
 
     const allTables = schema.raw_tables || schema.tables || [];
     showEl(`table-list-inst${n}-wrap`);
@@ -405,16 +403,12 @@ async function connectInstance(n) {
   }
 }
 
-// ── ERD counter helper ─────────────────────────────────────────────────────
-
 function updateErdCounter(n, filtered, total) {
   const filteredEl = $(`erd-filtered-inst${n}`);
   const totalEl    = $(`erd-total-inst${n}`);
   if (filteredEl) filteredEl.textContent = filtered;
   if (totalEl)    totalEl.textContent    = total;
 }
-
-// ── ERD filter wiring ──────────────────────────────────────────────────────
 
 function wireErdFilter(n) {
   const filterSel = $(`table-filter-inst${n}`);
@@ -440,7 +434,7 @@ function wireErdFilter(n) {
       state[`inst${n}`].network.destroy();
     }
     showEl(`erd-net-inst${n}`);
-    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`);
+    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`, n);
   };
 
   let searchTimer = null;
@@ -462,15 +456,11 @@ function wireErdFilter(n) {
   }
 }
 
-// ── Update action bar ──────────────────────────────────────────────────────
-
 function updateActionBar() {
   const both = state.inst1.connected && state.inst2.connected;
   $('btn-compare-schemas').disabled    = !both;
   $('btn-open-data-compare').disabled  = !both;
 }
-
-// ── Schema comparison ──────────────────────────────────────────────────────
 
 async function compareSchemas() {
   clearAlert('alert-schemas');
@@ -523,12 +513,12 @@ function renderSchemaResults(result) {
   if (state.inst1.schema && state.inst1.network) {
     const filtered1 = filterTables(state.inst1.schema, state.inst1.filterType || 'all', state.inst1.searchQuery || '');
     state.inst1.network.destroy();
-    state.inst1.network = renderERD('erd-net-inst1', state.inst1.schema, { removed: removedSet, modified: modifiedSet }, filtered1, 'erd-large-notice-inst1');
+    state.inst1.network = renderERD('erd-net-inst1', state.inst1.schema, { removed: removedSet, modified: modifiedSet }, filtered1, 'erd-large-notice-inst1', 1);
   }
   if (state.inst2.schema && state.inst2.network) {
     const filtered2 = filterTables(state.inst2.schema, state.inst2.filterType || 'all', state.inst2.searchQuery || '');
     state.inst2.network.destroy();
-    state.inst2.network = renderERD('erd-net-inst2', state.inst2.schema, { added: addedSet, modified: modifiedSet }, filtered2, 'erd-large-notice-inst2');
+    state.inst2.network = renderERD('erd-net-inst2', state.inst2.schema, { added: addedSet, modified: modifiedSet }, filtered2, 'erd-large-notice-inst2', 2);
   }
 
   if (state.inst1.schema) {
@@ -599,9 +589,8 @@ async function runDataCompare() {
   hideResults('results-data');
 
   if (!tableName) { showAlert('alert-data', 'error', 'Table name is required.'); return; }
-  if (!keyCols)   { showAlert('alert-data', 'error', 'Key columns are required.'); return; }
 
-  const keyArr     = keyCols.split(',').map(s => s.trim()).filter(Boolean);
+  const keyArr     = keyCols ? keyCols.split(',').map(s => s.trim()).filter(Boolean) : [];
   const compareArr = compareCols ? compareCols.split(',').map(s => s.trim()).filter(Boolean) : [];
 
   const c1 = getCredentials(1);
@@ -634,6 +623,18 @@ async function runDataCompare() {
 function renderDataResults(result) {
   showResults('results-data');
   $('data-result-table').textContent = result.table_name || '';
+
+  // Inject schema missing columns warnings if any
+  const warningsDiv = $('data-schema-warnings');
+  warningsDiv.innerHTML = '';
+  let warnHtml = '';
+  if (result.missing_in_1 && result.missing_in_1.length > 0) {
+    warnHtml += `<div class="alert alert-warn"><strong>Warning:</strong> Instance 1 is missing columns present in Instance 2: <span class="mono">${result.missing_in_1.join(', ')}</span></div>`;
+  }
+  if (result.missing_in_2 && result.missing_in_2.length > 0) {
+    warnHtml += `<div class="alert alert-warn"><strong>Warning:</strong> Instance 2 is missing columns present in Instance 1: <span class="mono">${result.missing_in_2.join(', ')}</span></div>`;
+  }
+  warningsDiv.innerHTML = warnHtml;
 
   const s = result.summary;
   $('data-stats').innerHTML = `
