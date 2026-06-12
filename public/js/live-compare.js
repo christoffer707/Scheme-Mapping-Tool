@@ -158,12 +158,11 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
   if (!container) return null;
 
   const tables = tableList || schema.tables || [];
-  
-  // RESTORED: This was missing and causing the ReferenceError crash
   const visibleTableNames = new Set(tables.map(t => t.name));
   
-  const nodes = new vis.DataSet();
-  const edges = new vis.DataSet(); 
+  // FIXED: Using standard arrays for initialization
+  const nodes = [];
+  const edges = []; 
 
   const addedSet    = highlights.added    || new Set();
   const removedSet  = highlights.removed  || new Set();
@@ -236,6 +235,7 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
     });
   }
 
+  // Convert the pure arrays into datasets for vis.js
   const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
 
   const options = {
@@ -270,12 +270,13 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
 
   network.on("click", (params) => {
     if (params.nodes.length > 0) {
-      focusTableOnInstance(instanceNum, params.nodes[0], schema, highlights, tables);
+      const targetTableName = params.nodes[0];
+      focusTableOnInstance(instanceNum, targetTableName, schema, highlights, tables);
 
       // Highlight the list item 
       const listId = `table-list-inst${instanceNum}`;
       document.querySelectorAll(`#${listId} .table-list-item`).forEach(el => el.style.background = '');
-      const listItem = $(`tli-${instanceNum}-${params.nodes[0]}`);
+      const listItem = $(`tli-${instanceNum}-${targetTableName}`);
       if (listItem) {
         listItem.style.background = '#e6f2ff';
         listItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -308,7 +309,6 @@ function focusTableOnInstance(n, targetTableName, schema, highlights, tables) {
     else if (removedSet.has(tableName)) { bg = '#c0392b'; border = '#a93226'; }
     else if (modifiedSet.has(tableName)) { bg = '#d68910'; border = '#b7770d'; }
     else {
-      // Find the table object to see if it's extended
       const tableObj = tables.find(t => t.name === tableName);
       const c = getTableColor(tableName, tableObj); 
       bg = c.bg; border = c.border;
