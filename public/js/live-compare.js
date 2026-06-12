@@ -1,11 +1,29 @@
+You are completely right. When we ported the drill-down logic into the Live Compare page, I forgot to attach the onclick action to the tables generated in the search list!
+
+Because they were just static text, clicking them did absolutely nothing. We need to wire those list items so that clicking one triggers the exact same drill-down as clicking a node on the canvas.
+
+I've also linked them so that if you click a node on the canvas, it will automatically scroll your list down and highlight the table you clicked.
+
+Replace your public/js/live-compare.js file entirely with this fixed version:
+
+JavaScript
+/**
+ * live-compare.js
+ * Frontend logic for the Live Dual-Instance Comparison page.
+ * Handles credential input, API calls, ERD rendering, and results display.
+ */
+
 'use strict';
 
+// ── State ──────────────────────────────────────────────────────────────────
 const state = {
   inst1: { schema: null, network: null, connected: false, filterType: 'all', searchQuery: '' },
   inst2: { schema: null, network: null, connected: false, filterType: 'all', searchQuery: '' },
   schemaCompareResult: null,
   dataCompareResult:   null,
 };
+
+// ── DOM helpers ────────────────────────────────────────────────────────────
 
 function $(id) { return document.getElementById(id); }
 
@@ -157,6 +175,7 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
   const removedSet  = highlights.removed  || new Set();
   const modifiedSet = highlights.modified || new Set();
 
+  const isLargeGraph = tables.length > 200;
   const goldenAngle = 137.508 * (Math.PI / 180);
 
   tables.forEach((table, index) => {
@@ -169,28 +188,102 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
       bg = c.bg; border = c.border;
     }
 
-    const r = 30 * Math.sqrt(index);
-    const theta = index * goldenAngle;
+    const colCount = (schema.columns?.[table.name] || []).length;
+    let nodeProps = {
+      id:    table.name,
+      label: table.name,
+      title: `Table: ${table.name}\nColumns: ${colCount}`,
+      color: {
+        background: bg,
+        border,
+        highlight: { background: bg, border },
+        hover:     { background: bg, border },
+      },
+      font:  { color: '#ffffff', size: 10 },
+      shape: 'box',
+      margin: 6
+    };
 
-    nodes.add({
-      id: table.name, label: table.name, title: `Table: ${table.name}`,
-      x: r * Math.cos(theta), y: r * Math.sin(theta),
-      color: { background: bg, border }, font: { color: 'white', size: 10 },
-      shape: 'box', margin: 6
-    });
+    if (isLargeGraph) {
+      const r = 30 * Math.sqrt(index);
+      const theta = index * goldenAngle;
+      nodeProps.x = r * Math.cos(theta);
+      nodeProps.y = r * Math.sin(theta);
+    }
+
+    nodes.push(nodeProps);
   });
 
+  if (!isLargeGraph) {
+    (schema.relationships || []).forEach(rel => {
+      if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
+      edges.push({
+        from:   rel.from,
+        to:     rel.to,
+        label:  rel.field,
+        arrows: 'to',
+        color:  { color: '#666666', highlight: '#00aaff', hover: '#00aaff' },
+        font:   { size: 9, color: '#aaaaaa', strokeWidth: 0 },
+        smooth: false
+      });
+    });
+  } else {
+    (schema.relationships || []).forEach(rel => {
+      edges.push({
+        from:   rel.from,
+        to:     rel.to,
+        arrows: 'to',
+        color:  { color: 'rgba(136,136,136,0.3)', highlight: '#00aaff', hover: '#00aaff' },
+        smooth: false
+      });
+    });
+  }
+
+  const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+
   const options = {
-    physics: { enabled: false },
-    interaction: { hideEdgesOnDrag: true, hideEdgesOnZoom: true, dragNodes: false }
+    physics: { enabled: !isLargeGraph },
+    layout: { improvedLayout: false },
+    interaction: {
+      navigationButtons: true,
+      keyboard: false,
+      zoomView: true,
+      hideEdgesOnDrag: isLargeGraph,
+      hideEdgesOnZoom: isLargeGraph
+    },
+    nodes: { borderWidth: 1, shadow: !isLargeGraph },
+    edges: { width: 1, selectionWidth: 2 }
   };
 
-  const network = new vis.Network(container, { nodes, edges }, options);
-  network.fit();
+  if (noticeId) {
+    const noticeEl = $(noticeId);
+    if (noticeEl) noticeEl.classList.toggle('visible', isLargeGraph);
+  }
+
+  const network = new vis.Network(container, data, options);
+
+  if (!isLargeGraph) {
+    network.once('stabilizationIterationsDone', () => {
+      network.setOptions({ physics: { enabled: false } });
+      network.fit();
+    });
+  } else {
+    network.fit();
+  }
 
   network.on("click", (params) => {
     if (params.nodes.length > 0) {
-      focusTableOnInstance(instanceNum, params.nodes[0], schema, highlights, tables);
+      const targetTableName = params.nodes[0];
+      focusTableOnInstance(instanceNum, targetTableName, schema, highlights, tables);
+
+      // Highlight the list item 
+      const listId = `table-list-inst${instanceNum}`;
+      document.querySelectorAll(`#${listId} .table-list-item`).forEach(el => el.style.background = '');
+      const listItem = $(`tli-${instanceNum}-${targetTableName}`);
+      if (listItem) {
+        listItem.style.background = '#e6f2ff';
+        listItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
     }
   });
 
@@ -269,6 +362,9 @@ window.resetToMacroView = function(n) {
   const btn = $(`btn-back-macro-inst${n}`);
   if (btn) btn.classList.add('hidden');
   
+  // Clear any list highlights
+  document.querySelectorAll(`#table-list-inst${n} .table-list-item`).forEach(el => el.style.background = '');
+
   const schema = state[`inst${n}`].schema;
   const filterType = state[`inst${n}`].filterType;
   const searchQuery = state[`inst${n}`].searchQuery;
@@ -290,7 +386,9 @@ window.resetToMacroView = function(n) {
   state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, highlights, filteredTables, `erd-large-notice-inst${n}`, n);
 }
 
-function renderTableList(listId, tables, highlights = {}) {
+// ── Table list rendering ───────────────────────────────────────────────────
+
+function renderTableList(listId, tables, highlights = {}, n) {
   const container = $(listId);
   if (!container) return;
 
@@ -308,6 +406,8 @@ function renderTableList(listId, tables, highlights = {}) {
   tables.forEach(table => {
     const div = document.createElement('div');
     div.className = 'table-list-item';
+    div.id = `tli-${n}-${table.name}`; // Allows targeting on click
+
     if (addedSet.has(table.name))    div.classList.add('highlight-added');
     if (removedSet.has(table.name))  div.classList.add('highlight-removed');
     if (modifiedSet.has(table.name)) div.classList.add('highlight-modified');
@@ -320,11 +420,23 @@ function renderTableList(listId, tables, highlights = {}) {
       </div>
       <div class="tli-cols">${colCount} cols</div>
     `;
+
+    // ADDED CLICK BINDING HERE
+    div.onclick = () => {
+      document.querySelectorAll(`#${listId} .table-list-item`).forEach(el => el.style.background = '');
+      div.style.background = '#e6f2ff';
+
+      if (n) {
+        const schema = state[`inst${n}`].schema;
+        focusTableOnInstance(n, table.name, schema, highlights, tables);
+      }
+    };
+
     container.appendChild(div);
   });
 }
 
-function wireTableSearch(searchId, listId, tables, highlights) {
+function wireTableSearch(searchId, listId, tables, highlights, n) {
   const input = $(searchId);
   if (!input) return;
   input.addEventListener('input', () => {
@@ -332,7 +444,7 @@ function wireTableSearch(searchId, listId, tables, highlights) {
     const filtered = q
       ? tables.filter(t => t.name.toLowerCase().includes(q) || (t.label || '').toLowerCase().includes(q))
       : tables;
-    renderTableList(listId, filtered, highlights);
+    renderTableList(listId, filtered, highlights, n);
   });
 }
 
@@ -386,8 +498,8 @@ async function connectInstance(n) {
     const allTables = schema.raw_tables || schema.tables || [];
     showEl(`table-list-inst${n}-wrap`);
     $(`table-count-inst${n}`).textContent = allTables.length;
-    renderTableList(`table-list-inst${n}`, allTables);
-    wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, allTables, {});
+    renderTableList(`table-list-inst${n}`, allTables, {}, n);
+    wireTableSearch(`table-search-inst${n}`, `table-list-inst${n}`, allTables, {}, n);
 
     wireErdFilter(n);
 
@@ -523,11 +635,11 @@ function renderSchemaResults(result) {
 
   if (state.inst1.schema) {
     const list1 = state.inst1.schema.raw_tables || state.inst1.schema.tables;
-    renderTableList('table-list-inst1', list1, { removed: removedSet, modified: modifiedSet });
+    renderTableList('table-list-inst1', list1, { removed: removedSet, modified: modifiedSet }, 1);
   }
   if (state.inst2.schema) {
     const list2 = state.inst2.schema.raw_tables || state.inst2.schema.tables;
-    renderTableList('table-list-inst2', list2, { added: addedSet, modified: modifiedSet });
+    renderTableList('table-list-inst2', list2, { added: addedSet, modified: modifiedSet }, 2);
   }
 
   $('badge-added-tables').textContent = s.added_count;
@@ -624,7 +736,6 @@ function renderDataResults(result) {
   showResults('results-data');
   $('data-result-table').textContent = result.table_name || '';
 
-  // Inject schema missing columns warnings if any
   const warningsDiv = $('data-schema-warnings');
   warningsDiv.innerHTML = '';
   let warnHtml = '';
