@@ -255,6 +255,10 @@ function getHTMLPage() {
         currentERD = data.erd;
         messageDiv.innerHTML = '';
         
+        try {
+          sessionStorage.setItem('sn_erd_cache', JSON.stringify({ url: instance, erd: currentERD }));
+        } catch(e) { console.warn("Schema too large for sessionStorage caching."); }
+
         document.getElementById('search-container').style.display = 'block';
         document.getElementById('table-count-label').innerText = \`\${Object.keys(currentERD.entities).length} tables loaded\`;
         
@@ -628,6 +632,28 @@ function getHTMLPage() {
       urlInput.addEventListener('input', syncToGlobal);
       userInput.addEventListener('input', syncToGlobal);
       passInput.addEventListener('input', syncToGlobal);
+
+      // ── Auto-Restore Cached Schema ──
+      const cachedErd = sessionStorage.getItem('sn_erd_cache');
+      if (cachedErd && urlInput.value) {
+        try {
+          const parsed = JSON.parse(cachedErd);
+          if (parsed.url === urlInput.value && parsed.erd) {
+            currentERD = parsed.erd;
+            document.getElementById('search-container').style.display = 'block';
+            document.getElementById('table-count-label').innerText = Object.keys(currentERD.entities).length + ' tables loaded';
+            populateEntityList(currentERD);
+            resetToMacroView();
+            document.getElementById('canvas-status').innerHTML = '<span style="color:#2ecc71;font-weight:bold;">✓ Restored from memory</span>';
+            setTimeout(() => {
+                const stat = document.getElementById('canvas-status');
+                if (stat.innerText.includes('Restored')) stat.innerHTML = 'Search & click a table to map its relationships.';
+            }, 3000);
+          }
+        } catch(e) {
+          console.warn("Could not restore ERD from session cache.");
+        }
+      }
     });
   </script>
 </body>
