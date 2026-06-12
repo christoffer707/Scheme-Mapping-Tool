@@ -197,6 +197,39 @@ function openTool(toolId) {
     $('btn-run-tool').onclick = runCalculatedColumns;
     $('btn-run-tool').innerText = 'Calculate & Download';
   }
+  else if (toolId === 'transpose-data') {
+    titleEl.innerText = 'Transpose Data';
+    optionsEl.innerHTML = `<p style="color:#8f9bb3; font-size:13px; margin:0;">No additional options required. This will flip all rows and columns in the dataset.</p>`;
+    $('btn-run-tool').onclick = runTransposeData;
+    $('btn-run-tool').innerText = 'Transpose & Download';
+  }
+  else if (toolId === 'pivot-data') {
+    titleEl.innerText = 'Pivot Table Generator';
+    optionsEl.innerHTML = `
+      <div class="row-flex">
+        <div class="form-group">
+          <label>Group By Column <span style="color:#888;">(Required)</span></label>
+          <input type="text" id="ws-opt-group" placeholder="e.g. state">
+        </div>
+        <div class="form-group">
+          <label>Value Column <span style="color:#888;">(Optional for Count)</span></label>
+          <input type="text" id="ws-opt-valcol" placeholder="e.g. cost">
+        </div>
+        <div class="form-group">
+          <label>Aggregation Function</label>
+          <select id="ws-opt-agg">
+            <option value="count">Count (Rows)</option>
+            <option value="sum">Sum</option>
+            <option value="avg">Average</option>
+            <option value="max">Max</option>
+            <option value="min">Min</option>
+          </select>
+        </div>
+      </div>
+    `;
+    $('btn-run-tool').onclick = runPivotData;
+    $('btn-run-tool').innerText = 'Generate Pivot & Download';
+  }
 }
 
 function closeTool() {
@@ -245,7 +278,53 @@ function buildPayload() {
   return fd;
 }
 
-// ── NEW: Row Filter ────────────────────────────────────────────────────────
+// ── NEW: Transpose Data ────────────────────────────────────────────────────
+async function runTransposeData() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Transposing data...';
+
+  try {
+    const fd = buildPayload();
+    const res = await fetch('/api/transpose-data', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'transposed_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your transposed file has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── NEW: Pivot Table ───────────────────────────────────────────────────────
+async function runPivotData() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Generating pivot table...';
+
+  try {
+    const fd = buildPayload();
+    fd.append('group_col', $('ws-opt-group').value.trim());
+    fd.append('value_col', $('ws-opt-valcol').value.trim());
+    fd.append('agg_func', $('ws-opt-agg').value);
+
+    const res = await fetch('/api/pivot-data', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'pivot_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your pivot table has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+
+// ── Existing Tools ─────────────────────────────────────────────────────────
+
 async function runRowFilter() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -269,7 +348,6 @@ async function runRowFilter() {
   }
 }
 
-// ── NEW: Calculated Columns ────────────────────────────────────────────────
 async function runCalculatedColumns() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -291,8 +369,6 @@ async function runCalculatedColumns() {
     alertEl.innerHTML = `❌ Error: ${err.message}`;
   }
 }
-
-// ── Existing Tools ─────────────────────────────────────────────────────────
 
 async function runFindReplace() {
   const alertEl = $('ws-alert');
