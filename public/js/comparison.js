@@ -8,7 +8,7 @@
 const state = {
   credentials: { url: '', user: '', pass: '' },
   currentTool: null,
-  currentMode: 'file' // 'file' or 'live'
+  currentMode: 'file' 
 };
 
 function $(id) { return document.getElementById(id); }
@@ -16,8 +16,6 @@ function $(id) { return document.getElementById(id); }
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-
-// ── Global Credentials ─────────────────────────────────────────────────────
 
 function saveGlobalCredentials() {
   state.credentials.url = $('g-url').value.trim();
@@ -28,8 +26,6 @@ function saveGlobalCredentials() {
   status.style.display = 'block';
   setTimeout(() => status.style.display = 'none', 3000);
 }
-
-// ── UI Navigation ──────────────────────────────────────────────────────────
 
 function openTool(toolId) {
   state.currentTool = toolId;
@@ -88,6 +84,40 @@ function openTool(toolId) {
     $('btn-run-tool').onclick = runKeyFinder;
     $('btn-run-tool').innerText = 'Find Natural Keys';
   }
+  else if (toolId === 'file-splitter') {
+    titleEl.innerText = 'File Splitter';
+    optionsEl.innerHTML = `
+      <div class="form-group" style="max-width: 300px;">
+        <label>Rows per Sheet/Chunk <span style="color:#888;">(Max recommended: 15,000)</span></label>
+        <input type="number" id="ws-opt-chunk" value="5000">
+      </div>
+    `;
+    $('btn-run-tool').onclick = runFileSplitter;
+    $('btn-run-tool').innerText = 'Split File & Download';
+  }
+  else if (toolId === 'column-normalizer') {
+    titleEl.innerText = 'Column Normalizer';
+    optionsEl.innerHTML = `
+      <div class="row-flex">
+        <div class="form-group">
+          <label>Columns to Normalize <span style="color:#888;">(Comma-separated required)</span></label>
+          <input type="text" id="ws-opt-cols" placeholder="e.g. short_description, comments">
+        </div>
+        <div class="form-group">
+          <label>Normalization Action</label>
+          <select id="ws-opt-action">
+            <option value="trim">Trim Whitespace</option>
+            <option value="lowercase">Convert to Lowercase</option>
+            <option value="uppercase">Convert to Uppercase</option>
+            <option value="remove_special">Remove Special Characters</option>
+            <option value="extract_numbers">Extract Numbers Only</option>
+          </select>
+        </div>
+      </div>
+    `;
+    $('btn-run-tool').onclick = runColumnNormalizer;
+    $('btn-run-tool').innerText = 'Normalize & Download';
+  }
 }
 
 function closeTool() {
@@ -110,8 +140,6 @@ function setMode(mode) {
     $('panel-file').classList.add('hidden');
   }
 }
-
-// ── Tool Executions ────────────────────────────────────────────────────────
 
 function buildPayload() {
   const fd = new FormData();
@@ -138,7 +166,57 @@ function buildPayload() {
   return fd;
 }
 
-// ── 1. Duplicate Finder (Returns Download)
+// ── NEW: File Splitter ─────────────────────────────────────────────────────
+async function runFileSplitter() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Splitting data...';
+
+  try {
+    const fd = buildPayload();
+    fd.append('chunk_size', $('ws-opt-chunk').value);
+
+    const res = await fetch('/api/split-data', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'split_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your split workbook has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── NEW: Column Normalizer ─────────────────────────────────────────────────
+async function runColumnNormalizer() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Normalizing columns...';
+
+  try {
+    const fd = buildPayload();
+    const cols = $('ws-opt-cols').value.trim();
+    const colArr = cols ? cols.split(',').map(c => c.trim()).filter(Boolean) : [];
+    if(colArr.length === 0) throw new Error("Please specify at least one column to normalize.");
+    
+    fd.append('columns', JSON.stringify(colArr));
+    fd.append('action', $('ws-opt-action').value);
+
+    const res = await fetch('/api/normalize-data', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'normalized_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your normalized file has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── Existing Functions (Dupe, Anonymize, Analyze, Key Finder) ──────────────
+
 async function runDuplicateFinder() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -162,7 +240,6 @@ async function runDuplicateFinder() {
   }
 }
 
-// ── 2. Data Anonymizer (Returns Download)
 async function runAnonymizer() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -190,7 +267,6 @@ async function runAnonymizer() {
   }
 }
 
-// ── 3. Column Analyzer (Renders UI)
 async function runColumnAnalyzer() {
   const alertEl = $('ws-alert');
   const resultsEl = $('ws-results');
@@ -206,7 +282,6 @@ async function runColumnAnalyzer() {
     const data = await res.json();
     alertEl.style.display = 'none';
     
-    // Render Results
     const ov = data.overview;
     let html = `
       <div class="results-grid">
@@ -245,7 +320,6 @@ async function runColumnAnalyzer() {
   }
 }
 
-// ── 4. Natural Key Finder (Renders UI)
 async function runKeyFinder() {
   const alertEl = $('ws-alert');
   const resultsEl = $('ws-results');
@@ -265,7 +339,6 @@ async function runKeyFinder() {
     const data = await res.json();
     alertEl.style.display = 'none';
     
-    // Render Results
     let html = '';
     
     if (data.primary_key && data.primary_key.length > 0) {
