@@ -2,9 +2,6 @@
  * routes/liveComparison.js
  * Express router for live dual-instance comparison endpoints.
  * Mounts at /api/live in server.js.
- *
- * All endpoints accept credentials in the request body and use them only
- * for the duration of the request — they are never logged or persisted.
  */
 
 import { Router } from 'express';
@@ -18,11 +15,7 @@ import { compareSchemas, compareData } from '../utils/dataProcessing.js';
 
 const router = Router();
 
-// ---------------------------------------------------------------------------
-// In-memory schema cache  (keyed by "<normalised_url>:<username>")
-// TTL: 5 minutes
-// ---------------------------------------------------------------------------
-const schemaCache = new Map(); // key -> { schema, expires }
+const schemaCache = new Map(); 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 function getCachedSchema(key) {
@@ -36,25 +29,15 @@ function setCachedSchema(key, schema) {
   schemaCache.set(key, { schema, expires: Date.now() + CACHE_TTL_MS });
 }
 
-function cacheKey(instanceUrl, username) {
-  return `${instanceUrl}::${username}`;
+function cacheKey(instanceUrl, username, includeCore) {
+  return `${instanceUrl}::${username}::${includeCore}`;
 }
-
-// ---------------------------------------------------------------------------
-// Input validation helpers
-// ---------------------------------------------------------------------------
 
 function requireFields(body, fields) {
   const missing = fields.filter(f => !body[f] || String(body[f]).trim() === '');
-  if (missing.length > 0) {
-    throw new Error(`Missing required fields: ${missing.join(', ')}`);
-  }
+  if (missing.length > 0) throw new Error(`Missing required fields: ${missing.join(', ')}`);
 }
 
-// ---------------------------------------------------------------------------
-// POST /api/live/test-connection
-// Body: { instance_url, username, password }
-// ---------------------------------------------------------------------------
 router.post('/test-connection', async (req, res) => {
   try {
     requireFields(req.body, ['instance_url', 'username', 'password']);
@@ -66,28 +49,19 @@ router.post('/test-connection', async (req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// POST /api/live/fetch-schema
-// Body: { instance_url, username, password, table_limit? }
-// Returns: { tables, raw_tables, columns, relationships,
-//            total_tables, filtered_tables, filter_applied, fetched_at }
-// ---------------------------------------------------------------------------
 router.post('/fetch-schema', async (req, res) => {
   try {
     requireFields(req.body, ['instance_url', 'username', 'password']);
     const { instance_url, username, password, table_limit, include_core } = req.body;
 
-    const normUrl    = normaliseInstanceUrl(instance_url);
+    const normUrl = normaliseInstanceUrl(instance_url);
     const includeCore = include_core === true || include_core === 'true';
-    // Cache key includes the includeCore flag so toggling it bypasses the cache
-    const key = cacheKey(normUrl, `${username}:${includeCore}`);
+    const key = cacheKey(normUrl, username, includeCore);
     const cached = getCachedSchema(key);
-    if (cached) {
-      return res.json({ success: true, cached: true, ...cached });
-    }
+    if (cached) return res.json({ success: true, cached: true, ...cached });
 
     const schema = await fetchServiceNowSchema(normUrl, username, password, {
-      tableLimit:  table_limit ? parseInt(table_limit, 10) : 100,
+      tableLimit: table_limit ? parseInt(table_limit, 10) : Infinity,
       includeCore,
     });
 
@@ -96,10 +70,6 @@ router.post('/fetch-schema', async (req, res) => {
       success: true,
       cached: false,
       ...schema,
-      // Explicitly surface the count metadata so clients don't have to derive it
-      total_tables:    schema.total_tables,
-      filtered_tables: schema.filtered_tables,
-      filter_applied:  schema.filter_applied,
     });
   } catch (err) {
     const status = err.message.includes('Authentication') ? 401 : 500;
@@ -107,12 +77,6 @@ router.post('/fetch-schema', async (req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// POST /api/live/compare-schemas
-// Body: { instance1_url, instance1_user, instance1_pass,
-//         instance2_url, instance2_user, instance2_pass }
-// Returns: { added, removed, common, type_mismatches, summary, ... }
-// ---------------------------------------------------------------------------
 router.post('/compare-schemas', async (req, res) => {
   try {
     requireFields(req.body, [
@@ -128,31 +92,27 @@ router.post('/compare-schemas', async (req, res) => {
     const url1 = normaliseInstanceUrl(instance1_url);
     const url2 = normaliseInstanceUrl(instance2_url);
 
-    // Fetch schemas (use cache where available)
     const [schema1, schema2] = await Promise.all([
       (async () => {
-        const key = cacheKey(url1, instance1_user);
+        const key = cacheKey(url1, instance1_user, true);
         const cached = getCachedSchema(key);
         if (cached) return cached;
-        const s = await fetchServiceNowSchema(url1, instance1_user, instance1_pass);
+        const s = await fetchServiceNowSchema(url1, instance1_user, instance1_pass, { includeCore: true });
         setCachedSchema(key, s);
         return s;
       })(),
       (async () => {
-        const key = cacheKey(url2, instance2_user);
+        const key = cacheKey(url2, instance2_user, true);
         const cached = getCachedSchema(key);
         if (cached) return cached;
-        const s = await fetchServiceNowSchema(url2, instance2_user, instance2_pass);
+        const s = await fetchServiceNowSchema(url2, instance2_user, instance2_pass, { includeCore: true });
         setCachedSchema(key, s);
         return s;
       })(),
     ]);
 
-    // Build table-level comparison using ALL tables (raw_tables) so the diff
-    // covers the full instance schema, not just the filtered display set.
     const allTables1 = schema1.raw_tables || schema1.tables;
     const allTables2 = schema2.raw_tables || schema2.tables;
-
     const allMap1 = new Map(allTables1.map(t => [t.name, t]));
     const allMap2 = new Map(allTables2.map(t => [t.name, t]));
 
@@ -160,14 +120,11 @@ router.post('/compare-schemas', async (req, res) => {
     const removed = allTables1.filter(t => !allMap2.has(t.name));
     const common  = allTables1.filter(t => allMap2.has(t.name));
 
-    // Column-level diff for common tables (columns are only fetched for the
-    // filtered display set, so this diff is scoped to those tables)
     const modified = [];
     for (const table of common) {
       const cols1 = new Map((schema1.columns[table.name] || []).map(c => [c.name, c]));
       const cols2 = new Map((schema2.columns[table.name] || []).map(c => [c.name, c]));
 
-      // Skip tables where neither instance has column data (outside filtered set)
       if (cols1.size === 0 && cols2.size === 0) continue;
 
       const colsAdded   = [...cols2.keys()].filter(c => !cols1.has(c));
@@ -216,19 +173,12 @@ router.post('/compare-schemas', async (req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// POST /api/live/compare-data
-// Body: { instance1_url, instance1_user, instance1_pass,
-//         instance2_url, instance2_user, instance2_pass,
-//         table_name, key_columns (JSON array), compare_columns? (JSON array) }
-// Returns: { added_rows, removed_rows, changed_rows, summary }
-// ---------------------------------------------------------------------------
 router.post('/compare-data', async (req, res) => {
   try {
     requireFields(req.body, [
       'instance1_url', 'instance1_user', 'instance1_pass',
       'instance2_url', 'instance2_user', 'instance2_pass',
-      'table_name', 'key_columns',
+      'table_name',
     ]);
 
     const {
@@ -242,8 +192,9 @@ router.post('/compare-data', async (req, res) => {
     try { keyColumns     = JSON.parse(req.body.key_columns     || '[]'); } catch { /* ignore */ }
     try { compareColumns = JSON.parse(req.body.compare_columns || '[]'); } catch { /* ignore */ }
 
-    if (keyColumns.length === 0) {
-      return res.status(400).json({ success: false, error: 'key_columns must be a non-empty JSON array.' });
+    // Make Keys optional - default to sys_id
+    if (!keyColumns || keyColumns.length === 0) {
+      keyColumns = ['sys_id'];
     }
 
     const url1 = normaliseInstanceUrl(instance1_url);
@@ -258,6 +209,12 @@ router.post('/compare-data', async (req, res) => {
       fetchServiceNowTableData(url2, instance2_user, instance2_pass, table_name, { fields }),
     ]);
 
+    // Cross-check schemas to warn user of missing fields
+    const cols1 = result1.rows.length > 0 ? Object.keys(result1.rows[0]) : [];
+    const cols2 = result2.rows.length > 0 ? Object.keys(result2.rows[0]) : [];
+    const missingIn1 = cols2.filter(c => !cols1.includes(c));
+    const missingIn2 = cols1.filter(c => !cols2.includes(c));
+
     const diff = compareData(result1.rows, result2.rows, keyColumns, compareColumns);
 
     res.json({
@@ -266,6 +223,8 @@ router.post('/compare-data', async (req, res) => {
       instance2_url: url2,
       table_name,
       key_columns: keyColumns,
+      missing_in_1: missingIn1,
+      missing_in_2: missingIn2,
       ...diff,
     });
   } catch (err) {
