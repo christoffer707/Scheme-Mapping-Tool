@@ -8,7 +8,8 @@
 const state = {
   credentials: { url: '', user: '', pass: '' },
   currentTool: null,
-  currentMode: 'file' 
+  currentMode: 'file', // Standard tools
+  merge: { mode1: 'file', mode2: 'file' } // Merge Tool modes
 };
 
 function $(id) { return document.getElementById(id); }
@@ -40,6 +41,20 @@ function openTool(toolId) {
 
   const titleEl = $('ws-title');
   const optionsEl = $('ws-options');
+  const stdHeader = $('ws-standard-header');
+  
+  // Display standard header for everything EXCEPT merge tool
+  if (toolId === 'data-merge') {
+    stdHeader.style.display = 'none';
+    optionsEl.style.padding = '0';
+    optionsEl.style.background = 'transparent';
+    optionsEl.style.border = 'none';
+  } else {
+    stdHeader.style.display = 'block';
+    optionsEl.style.padding = '24px';
+    optionsEl.style.background = '#1a1d29';
+    optionsEl.style.border = '1px solid #2d3142';
+  }
   
   if (toolId === 'duplicate-finder') {
     titleEl.innerText = 'Duplicate Finder';
@@ -230,6 +245,76 @@ function openTool(toolId) {
     $('btn-run-tool').onclick = runPivotData;
     $('btn-run-tool').innerText = 'Generate Pivot & Download';
   }
+  else if (toolId === 'data-merge') {
+    titleEl.innerText = 'Data Merge / Join';
+    optionsEl.innerHTML = `
+      <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+        <!-- SOURCE A -->
+        <div style="flex: 1; background: #1a1d29; border: 1px solid #2d3142; border-radius: 12px; padding: 24px; min-width: 300px;">
+          <h4 style="margin-bottom:15px; color:#4da6ff;">Source A (Left Table)</h4>
+          <div class="toggle-container" style="margin-bottom: 15px;">
+            <div class="toggle-btn active" id="m-btn-file-1" onclick="setMergeMode(1, 'file')">📁 File</div>
+            <div class="toggle-btn" id="m-btn-live-1" onclick="setMergeMode(1, 'live')">⚡ Live API</div>
+          </div>
+          <div id="m-panel-file-1">
+            <div class="drop-zone" style="padding: 20px;">
+              <input type="file" id="m-file-1" accept=".csv,.xlsx,.xls" onchange="document.getElementById('m-fname-1').innerText = this.files[0] ? this.files[0].name : ''" />
+              <div style="font-size:24px; margin-bottom:5px;">📄</div>
+              <div style="font-weight:600; font-size:12px; color:#e2e8f0;">Drop file here</div>
+              <div id="m-fname-1" style="margin-top:5px; color:#4da6ff; font-family:monospace; font-size:11px;"></div>
+            </div>
+          </div>
+          <div id="m-panel-live-1" class="hidden">
+            <div class="form-group"><label>Table Name</label><input type="text" id="m-table-1" placeholder="e.g. incident"></div>
+            <div class="form-group"><label>Encoded Query</label><input type="text" id="m-query-1" placeholder="e.g. active=true"></div>
+          </div>
+          <div class="form-group" style="margin-top: 15px;">
+            <label style="color:#a78bfa;">Join Key (Source A Column)</label>
+            <input type="text" id="m-key-1" placeholder="e.g. sys_id">
+          </div>
+        </div>
+
+        <!-- SOURCE B -->
+        <div style="flex: 1; background: #1a1d29; border: 1px solid #2d3142; border-radius: 12px; padding: 24px; min-width: 300px;">
+          <h4 style="margin-bottom:15px; color:#f472b6;">Source B (Right Table)</h4>
+          <div class="toggle-container" style="margin-bottom: 15px;">
+            <div class="toggle-btn active" id="m-btn-file-2" onclick="setMergeMode(2, 'file')">📁 File</div>
+            <div class="toggle-btn" id="m-btn-live-2" onclick="setMergeMode(2, 'live')">⚡ Live API</div>
+          </div>
+          <div id="m-panel-file-2">
+            <div class="drop-zone" style="padding: 20px;">
+              <input type="file" id="m-file-2" accept=".csv,.xlsx,.xls" onchange="document.getElementById('m-fname-2').innerText = this.files[0] ? this.files[0].name : ''" />
+              <div style="font-size:24px; margin-bottom:5px;">📄</div>
+              <div style="font-weight:600; font-size:12px; color:#e2e8f0;">Drop file here</div>
+              <div id="m-fname-2" style="margin-top:5px; color:#4da6ff; font-family:monospace; font-size:11px;"></div>
+            </div>
+          </div>
+          <div id="m-panel-live-2" class="hidden">
+            <div class="form-group"><label>Table Name</label><input type="text" id="m-table-2" placeholder="e.g. sys_user"></div>
+            <div class="form-group"><label>Encoded Query</label><input type="text" id="m-query-2" placeholder="e.g. active=true"></div>
+          </div>
+          <div class="form-group" style="margin-top: 15px;">
+            <label style="color:#a78bfa;">Join Key (Source B Column)</label>
+            <input type="text" id="m-key-2" placeholder="e.g. caller_id">
+          </div>
+        </div>
+      </div>
+
+      <div style="background: #1a1d29; border: 1px solid #2d3142; border-radius: 12px; padding: 24px; margin-top: 20px;">
+        <div class="form-group" style="margin:0;">
+          <label>Join Type / Logic</label>
+          <select id="m-join-type">
+            <option value="left">Left Join (Keep all Source A rows, append matching B)</option>
+            <option value="inner">Inner Join (Keep ONLY rows where A and B keys match)</option>
+            <option value="right">Right Join (Keep all Source B rows, append matching A)</option>
+            <option value="outer">Full Outer Join (Keep EVERYTHING from A and B)</option>
+          </select>
+        </div>
+      </div>
+    `;
+    $('btn-run-tool').onclick = runDataMerge;
+    $('btn-run-tool').innerText = 'Execute Join & Download';
+  }
 }
 
 function closeTool() {
@@ -250,6 +335,21 @@ function setMode(mode) {
     $('btn-mode-file').classList.remove('active');
     $('panel-live').classList.remove('hidden');
     $('panel-file').classList.add('hidden');
+  }
+}
+
+window.setMergeMode = function(sourceNum, mode) {
+  state.merge[`mode${sourceNum}`] = mode;
+  if (mode === 'file') {
+    $(`m-btn-file-${sourceNum}`).classList.add('active');
+    $(`m-btn-live-${sourceNum}`).classList.remove('active');
+    $(`m-panel-file-${sourceNum}`).classList.remove('hidden');
+    $(`m-panel-live-${sourceNum}`).classList.add('hidden');
+  } else {
+    $(`m-btn-live-${sourceNum}`).classList.add('active');
+    $(`m-btn-file-${sourceNum}`).classList.remove('active');
+    $(`m-panel-live-${sourceNum}`).classList.remove('hidden');
+    $(`m-panel-file-${sourceNum}`).classList.add('hidden');
   }
 }
 
@@ -278,7 +378,70 @@ function buildPayload() {
   return fd;
 }
 
-// ── NEW: Transpose Data ────────────────────────────────────────────────────
+// ── NEW: Data Merge / Join ─────────────────────────────────────────────────
+async function runDataMerge() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Extracting and joining data...';
+
+  try {
+    const fd = new FormData();
+    const mode1 = state.merge.mode1;
+    const mode2 = state.merge.mode2;
+
+    fd.append('mode1', mode1);
+    fd.append('mode2', mode2);
+
+    if (mode1 === 'file') {
+      const file1 = $('m-file-1').files[0];
+      if (!file1) throw new Error("Source A is missing a file upload.");
+      fd.append('file1', file1);
+    } else {
+      if (!state.credentials.url) throw new Error("Missing Global Credentials for Live Pull on Source A.");
+      fd.append('url1', state.credentials.url);
+      fd.append('user1', state.credentials.user);
+      fd.append('pass1', state.credentials.pass);
+      fd.append('table1', $('m-table-1').value.trim());
+      fd.append('query1', $('m-query-1').value.trim());
+      fd.append('limit1', 20000); 
+    }
+
+    if (mode2 === 'file') {
+      const file2 = $('m-file-2').files[0];
+      if (!file2) throw new Error("Source B is missing a file upload.");
+      fd.append('file2', file2);
+    } else {
+      if (!state.credentials.url) throw new Error("Missing Global Credentials for Live Pull on Source B.");
+      fd.append('url2', state.credentials.url);
+      fd.append('user2', state.credentials.user);
+      fd.append('pass2', state.credentials.pass);
+      fd.append('table2', $('m-table-2').value.trim());
+      fd.append('query2', $('m-query-2').value.trim());
+      fd.append('limit2', 20000); 
+    }
+
+    const key1 = $('m-key-1').value.trim();
+    const key2 = $('m-key-2').value.trim();
+    if (!key1 || !key2) throw new Error("You must specify a Join Key for both Source A and Source B.");
+
+    fd.append('key1', key1);
+    fd.append('key2', key2);
+    fd.append('join_type', $('m-join-type').value);
+
+    const res = await fetch('/api/merge-data', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'merged_data_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your joined data file has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── Existing Tools ─────────────────────────────────────────────────────────
+
 async function runTransposeData() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -298,7 +461,6 @@ async function runTransposeData() {
   }
 }
 
-// ── NEW: Pivot Table ───────────────────────────────────────────────────────
 async function runPivotData() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -321,9 +483,6 @@ async function runPivotData() {
     alertEl.innerHTML = `❌ Error: ${err.message}`;
   }
 }
-
-
-// ── Existing Tools ─────────────────────────────────────────────────────────
 
 async function runRowFilter() {
   const alertEl = $('ws-alert');
