@@ -17,7 +17,9 @@ import {
   splitDataFrame,
   normalizeColumns,
   findAndReplace,
-  columnOperations
+  columnOperations,
+  rowFilter,
+  calculatedColumns
 } from '../utils/dataProcessing.js';
 
 const router = Router();
@@ -45,7 +47,53 @@ async function getDataFrame(req) {
   throw new Error("No data source provided. Upload a file or provide instance credentials and a table name.");
 }
 
-// ── NEW: Find & Replace ────────────────────────────────────────────────────
+// ── NEW: Row Filter ────────────────────────────────────────────────────────
+router.post('/row-filter', upload.single('file'), async (req, res) => {
+  try {
+    const df = await getDataFrame(req);
+    if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
+    
+    const { filter_col, filter_op, filter_val } = req.body;
+    if (!filter_col) return res.status(400).json({ error: 'Filter column is required.' });
+
+    const filteredData = rowFilter(df, filter_col, filter_op, filter_val);
+
+    const sheets = { 'Filtered Data': filteredData };
+    const xlsxBuffer = await buildExcelReport(sheets);
+    const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="filtered_${fileName}.xlsx"`);
+    res.send(Buffer.from(xlsxBuffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── NEW: Calculated Columns ────────────────────────────────────────────────
+router.post('/calculated-columns', upload.single('file'), async (req, res) => {
+  try {
+    const df = await getDataFrame(req);
+    if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
+    
+    const { new_col_name, expression } = req.body;
+    if (!new_col_name || !expression) return res.status(400).json({ error: 'New column name and expression are required.' });
+
+    const calculatedData = calculatedColumns(df, new_col_name, expression);
+
+    const sheets = { 'Calculated Data': calculatedData };
+    const xlsxBuffer = await buildExcelReport(sheets);
+    const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="calc_${fileName}.xlsx"`);
+    res.send(Buffer.from(xlsxBuffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Find & Replace ─────────────────────────────────────────────────────────
 router.post('/find-replace', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
@@ -53,7 +101,7 @@ router.post('/find-replace', upload.single('file'), async (req, res) => {
     
     let columns = [];
     try { columns = JSON.parse(req.body.columns || '[]'); } catch {}
-    if (columns.length === 0) columns = Object.keys(df[0]); // default to all
+    if (columns.length === 0) columns = Object.keys(df[0]); 
 
     const searchStr = req.body.search_str || '';
     const replaceStr = req.body.replace_str || '';
@@ -74,7 +122,7 @@ router.post('/find-replace', upload.single('file'), async (req, res) => {
   }
 });
 
-// ── NEW: Column Operations ─────────────────────────────────────────────────
+// ── Column Operations ──────────────────────────────────────────────────────
 router.post('/column-ops', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
