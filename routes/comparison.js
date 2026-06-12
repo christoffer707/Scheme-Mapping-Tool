@@ -9,7 +9,7 @@ import { fetchServiceNowTableData } from '../utils/servicenowAPI.js';
 import {
   compareSchemas, compareData, scrubDataFrame, analyzeDataFrame, findNaturalKeys, parseFileBuffer,
   buildExcelReport, splitDataFrame, normalizeColumns, findAndReplace, columnOperations,
-  rowFilter, calculatedColumns, transposeData, pivotData
+  rowFilter, calculatedColumns, transposeData, pivotData, dataMergeJoin
 } from '../utils/dataProcessing.js';
 
 const router = Router();
@@ -37,50 +37,81 @@ async function getDataFrame(req) {
   throw new Error("No data source provided. Upload a file or provide instance credentials and a table name.");
 }
 
-// ── NEW: Transpose Data ────────────────────────────────────────────────────
+// ── NEW: Data Merge / Join (Dual-Source Architecture) ──────────────────────
+router.post('/merge-data', upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]), async (req, res) => {
+  try {
+    // Isolated dataframe parser for dual-mode payloads
+    const getDF = async (prefix) => {
+      const mode = req.body[`mode${prefix}`];
+      if (mode === 'file') {
+        const file = req.files && req.files[`file${prefix}`] ? req.files[`file${prefix}`][0] : null;
+        if (!file) throw new Error(`Source ${prefix} is set to File but no file was uploaded.`);
+        return await parseFileBuffer(file.buffer, file.originalname);
+      } else {
+        const url = req.body[`url${prefix}`];
+        const user = req.body[`user${prefix}`];
+        const pass = req.body[`pass${prefix}`];
+        const table = req.body[`table${prefix}`];
+        const query = req.body[`query${prefix}`] || '';
+        const limit = parseInt(req.body[`limit${prefix}`], 10) || 10000;
+        if (!url || !table) throw new Error(`Source ${prefix} is missing live credentials or table name.`);
+        const result = await fetchServiceNowTableData(url, user, pass, table, { query, limit });
+        return result.rows;
+      }
+    };
+
+    const df1 = await getDF('1');
+    const df2 = await getDF('2');
+
+    if (df1.length === 0 || df2.length === 0) return res.status(400).json({ error: 'One or both data sources returned 0 rows.' });
+
+    const { key1, key2, join_type } = req.body;
+    if (!key1 || !key2) return res.status(400).json({ error: 'Join Keys for both sources are required.' });
+
+    const merged = dataMergeJoin(df1, df2, key1, key2, join_type || 'left');
+
+    const sheets = { 'Merged Data': merged };
+    const xlsxBuffer = await buildExcelReport(sheets);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="merged_data.xlsx"`);
+    res.send(Buffer.from(xlsxBuffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Existing Single-Source Endpoints ───────────────────────────────────────
 router.post('/transpose-data', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
     const transposed = transposeData(df);
-    
     const sheets = { 'Transposed Data': transposed };
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="transposed_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── NEW: Pivot Table ───────────────────────────────────────────────────────
 router.post('/pivot-data', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
     const { group_col, value_col, agg_func } = req.body;
     if (!group_col) return res.status(400).json({ error: 'Group By column is required.' });
-
     const pivoted = pivotData(df, group_col, value_col, agg_func || 'count');
-
     const sheets = { 'Pivot Table': pivoted };
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="pivot_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Existing Routes ────────────────────────────────────────────────────────
 router.post('/row-filter', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
