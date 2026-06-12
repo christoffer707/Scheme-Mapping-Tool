@@ -208,7 +208,7 @@ export function columnOperations(df, ops) {
   });
 }
 
-// ── NEW: Row Filter ────────────────────────────────────────────────────────
+// ── Row Filter ─────────────────────────────────────────────────────────────
 export function rowFilter(df, col, op, val) {
   return df.filter(row => {
     const rv = String(row[col] || '').toLowerCase();
@@ -227,14 +227,11 @@ export function rowFilter(df, col, op, val) {
   });
 }
 
-// ── NEW: Calculated Columns ────────────────────────────────────────────────
+// ── Calculated Columns ─────────────────────────────────────────────────────
 export function calculatedColumns(df, newColumnName, expression) {
   return df.map(row => {
     const newRow = { ...row };
     try {
-      // Replaces [column_name] with row['column_name']
-      // Example input: [price] * 1.2
-      // Safe scoped evaluation via Function constructor
       let jsExpr = expression.replace(/\[([^\]]+)\]/g, "row['$1']");
       const fn = new Function('row', `return ${jsExpr};`);
       newRow[newColumnName] = fn(row);
@@ -243,6 +240,61 @@ export function calculatedColumns(df, newColumnName, expression) {
     }
     return newRow;
   });
+}
+
+// ── NEW: Transpose Data ────────────────────────────────────────────────────
+export function transposeData(df) {
+  if (!df || df.length === 0) return [];
+  const originalCols = Object.keys(df[0]);
+  const result = [];
+  
+  for (const col of originalCols) {
+    const newRow = { "Original_Column": col };
+    df.forEach((row, idx) => {
+      newRow[`Row_${idx + 1}`] = row[col];
+    });
+    result.push(newRow);
+  }
+  return result;
+}
+
+// ── NEW: Pivot Table Generator ─────────────────────────────────────────────
+export function pivotData(df, groupCol, valCol, aggFunc) {
+  const groups = {};
+  
+  // 1. Group records
+  df.forEach(row => {
+    const k = String(row[groupCol] ?? 'Unknown');
+    if (!groups[k]) groups[k] = { count: 0, values: [] };
+    groups[k].count++;
+    
+    if (valCol) {
+      const v = Number(row[valCol]);
+      if (!isNaN(v)) groups[k].values.push(v);
+    }
+  });
+
+  // 2. Aggregate
+  const result = [];
+  for (const [k, data] of Object.entries(groups)) {
+    let aggVal = 0;
+    if (aggFunc === 'count') {
+      aggVal = data.count;
+    } else if (data.values.length > 0) {
+      const vals = data.values;
+      if (aggFunc === 'sum') aggVal = vals.reduce((a, b) => a + b, 0);
+      else if (aggFunc === 'avg') aggVal = vals.reduce((a, b) => a + b, 0) / vals.length;
+      else if (aggFunc === 'max') aggVal = Math.max(...vals);
+      else if (aggFunc === 'min') aggVal = Math.min(...vals);
+    }
+    result.push({ 
+      [groupCol]: k, 
+      [`${aggFunc}_${valCol || 'records'}`]: +aggVal.toFixed(4) 
+    });
+  }
+  
+  // Sort alphabetically by the group key to make the table readable
+  return result.sort((a, b) => String(a[groupCol]).localeCompare(String(b[groupCol])));
 }
 
 // ── Anonymization ──────────────────────────────────────────────────────────
