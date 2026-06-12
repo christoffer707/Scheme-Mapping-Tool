@@ -13,6 +13,10 @@ const state = {
 
 function $(id) { return document.getElementById(id); }
 
+function escHtml(str) {
+  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // ── Global Credentials ─────────────────────────────────────────────────────
 
 function saveGlobalCredentials() {
@@ -33,11 +37,14 @@ function openTool(toolId) {
   $('workspace').style.display = 'block';
   $('ws-alert').className = 'alert';
   $('ws-alert').innerHTML = '';
+  
+  const resultsEl = $('ws-results');
+  resultsEl.innerHTML = '';
+  resultsEl.classList.add('hidden');
 
   const titleEl = $('ws-title');
   const optionsEl = $('ws-options');
   
-  // Build UI specifically for the tool selected
   if (toolId === 'duplicate-finder') {
     titleEl.innerText = 'Duplicate Finder';
     optionsEl.innerHTML = `
@@ -47,6 +54,39 @@ function openTool(toolId) {
       </div>
     `;
     $('btn-run-tool').onclick = runDuplicateFinder;
+    $('btn-run-tool').innerText = 'Find Duplicates & Download';
+  } 
+  else if (toolId === 'data-anonymizer') {
+    titleEl.innerText = 'Data Anonymizer';
+    optionsEl.innerHTML = `
+      <div class="form-group">
+        <label>Columns to Anonymize <span style="color:#888;">(Comma-separated required)</span></label>
+        <input type="text" id="ws-opt-cols" placeholder="e.g. email, phone, u_social_security">
+      </div>
+      <div class="checkbox-group">
+        <label class="checkbox-row"><input type="checkbox" id="ws-opt-preserve" checked> Preserve foreign key relationships (Consistent Substitution)</label>
+        <label class="checkbox-row"><input type="checkbox" id="ws-opt-map" checked> Include mapping key sheet in download</label>
+      </div>
+    `;
+    $('btn-run-tool').onclick = runAnonymizer;
+    $('btn-run-tool').innerText = 'Anonymize & Download';
+  }
+  else if (toolId === 'column-analyzer') {
+    titleEl.innerText = 'Column Analyzer';
+    optionsEl.innerHTML = `<p style="color:#8f9bb3; font-size:13px; margin:0;">No additional options required. The analyzer will profile all columns in the dataset.</p>`;
+    $('btn-run-tool').onclick = runColumnAnalyzer;
+    $('btn-run-tool').innerText = 'Run Analysis';
+  }
+  else if (toolId === 'natural-key-finder') {
+    titleEl.innerText = 'Natural Key Finder';
+    optionsEl.innerHTML = `
+      <div class="form-group">
+        <label>Columns to Consider <span style="color:#888;">(Comma-separated. Leave blank to test all combinations)</span></label>
+        <input type="text" id="ws-opt-cols" placeholder="e.g. number, state, sys_created_on">
+      </div>
+    `;
+    $('btn-run-tool').onclick = runKeyFinder;
+    $('btn-run-tool').innerText = 'Find Natural Keys';
   }
 }
 
@@ -75,7 +115,6 @@ function setMode(mode) {
 
 function buildPayload() {
   const fd = new FormData();
-  
   if (state.currentMode === 'file') {
     const file = $('ws-file').files[0];
     if (!file) throw new Error("Please select a file to upload.");
@@ -99,41 +138,198 @@ function buildPayload() {
   return fd;
 }
 
+// ── 1. Duplicate Finder (Returns Download)
 async function runDuplicateFinder() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
-  alertEl.innerHTML = '⏳ Processing data... This may take a moment for large datasets.';
+  alertEl.innerHTML = '⏳ Processing data...';
 
   try {
     const fd = buildPayload();
-    
     const cols = $('ws-opt-cols').value.trim();
     const colArr = cols ? cols.split(',').map(c => c.trim()).filter(Boolean) : [];
     fd.append('check_columns', JSON.stringify(colArr));
 
     const res = await fetch('/api/find-duplicates', { method: 'POST', body: fd });
-    
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try { const j = await res.json(); msg = j.error || msg; } catch {}
-      throw new Error(msg);
-    }
+    if (!res.ok) throw new Error(await extractError(res));
 
-    // Trigger file download
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `deduplicated_export.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
+    triggerDownload(await res.blob(), 'deduplicated_export.xlsx');
     alertEl.className = 'alert success';
     alertEl.innerHTML = '✅ Success! Your deduplicated Excel file has been downloaded.';
   } catch (err) {
     alertEl.className = 'alert error';
     alertEl.innerHTML = `❌ Error: ${err.message}`;
   }
+}
+
+// ── 2. Data Anonymizer (Returns Download)
+async function runAnonymizer() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Anonymizing data...';
+
+  try {
+    const fd = buildPayload();
+    const cols = $('ws-opt-cols').value.trim();
+    const colArr = cols ? cols.split(',').map(c => c.trim()).filter(Boolean) : [];
+    if(colArr.length === 0) throw new Error("Please specify at least one column to anonymize.");
+    
+    fd.append('columns_to_scrub', JSON.stringify(colArr));
+    fd.append('preserve_relationships', $('ws-opt-preserve').checked);
+    fd.append('export_mapping', $('ws-opt-map').checked);
+
+    const res = await fetch('/api/scrub-data', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'anonymized_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your anonymized file has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── 3. Column Analyzer (Renders UI)
+async function runColumnAnalyzer() {
+  const alertEl = $('ws-alert');
+  const resultsEl = $('ws-results');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Analyzing columns...';
+  resultsEl.classList.add('hidden');
+
+  try {
+    const fd = buildPayload();
+    const res = await fetch('/api/analyze-data', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+    
+    const data = await res.json();
+    alertEl.style.display = 'none';
+    
+    // Render Results
+    const ov = data.overview;
+    let html = `
+      <div class="results-grid">
+        <div class="stat-card"><div class="stat-val">${ov.row_count.toLocaleString()}</div><div class="stat-lbl">Total Rows</div></div>
+        <div class="stat-card"><div class="stat-val">${ov.column_count}</div><div class="stat-lbl">Columns</div></div>
+        <div class="stat-card"><div class="stat-val">${ov.duplicate_rows}</div><div class="stat-lbl">Duplicate Rows</div></div>
+        <div class="stat-card"><div class="stat-val">${ov.total_nulls.toLocaleString()}</div><div class="stat-lbl">Total Nulls</div></div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Confidence</th><th>Non-Null</th><th>Null %</th><th>Unique</th><th>Min</th><th>Max</th><th>Top Value</th></tr></thead>
+          <tbody>
+    `;
+    
+    for (const [col, info] of Object.entries(data.columns || {})) {
+      const topVal = info.top_values?.[0];
+      html += `<tr>
+        <td class="mono">${escHtml(col)}</td>
+        <td><span class="badge">${escHtml(info.semantic_type)}</span></td>
+        <td>${Math.round(info.type_confidence * 100)}%</td>
+        <td>${info.non_null.toLocaleString()}</td>
+        <td style="color:${info.null_pct > 20 ? '#e74c3c' : '#a0aec0'}">${info.null_pct}%</td>
+        <td><span class="badge ${info.is_unique ? 'green' : ''}">${info.unique_count.toLocaleString()} ${info.is_unique ? '🔑' : ''}</span></td>
+        <td>${escHtml(info.stats?.min ?? '—')}</td>
+        <td>${escHtml(info.stats?.max ?? '—')}</td>
+        <td>${escHtml(topVal?.value ?? '—')}</td>
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+    
+    resultsEl.innerHTML = html;
+    resultsEl.classList.remove('hidden');
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── 4. Natural Key Finder (Renders UI)
+async function runKeyFinder() {
+  const alertEl = $('ws-alert');
+  const resultsEl = $('ws-results');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Running Apriori algorithm to discover keys...';
+  resultsEl.classList.add('hidden');
+
+  try {
+    const fd = buildPayload();
+    const cols = $('ws-opt-cols').value.trim();
+    const colArr = cols ? cols.split(',').map(c => c.trim()).filter(Boolean) : [];
+    fd.append('selected_columns', JSON.stringify(colArr));
+
+    const res = await fetch('/api/find-keys', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+    
+    const data = await res.json();
+    alertEl.style.display = 'none';
+    
+    // Render Results
+    let html = '';
+    
+    if (data.primary_key && data.primary_key.length > 0) {
+      html += `
+        <div style="background: rgba(46, 204, 113, 0.1); border: 1px solid rgba(46, 204, 113, 0.2); padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+          <h4 style="color: #2ecc71; margin-bottom: 8px;">🏆 Recommended Primary Key</h4>
+          ${data.primary_key.map(c => `<span class="badge green" style="margin-right:8px; font-size:13px;">${escHtml(c)}</span>`).join('')}
+        </div>
+      `;
+    } else {
+      html += `<div class="alert info" style="display:block; margin-bottom:20px;">No minimal keys found.</div>`;
+    }
+
+    if (data.minimal_combinations && data.minimal_combinations.length > 0) {
+      html += `<h4 style="color:#fff; margin-bottom:10px;">Alternative Key Combinations</h4><div style="margin-bottom:20px;">`;
+      data.minimal_combinations.slice(0, 5).forEach((combo, i) => {
+        html += `<div style="margin-bottom:8px;"><span style="color:#8f9bb3; margin-right:8px;">Option ${i+1}:</span>`;
+        html += combo.map(c => `<span class="badge" style="margin-right:4px;">${escHtml(c)}</span>`).join('');
+        html += `</div>`;
+      });
+      html += `</div>`;
+    }
+
+    html += `
+      <h4 style="color:#fff; margin-bottom:10px;">Column Uniqueness Breakdown</h4>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Column</th><th>Unique Count</th><th>Uniqueness %</th><th>Is Key?</th></tr></thead>
+          <tbody>
+    `;
+    const rowCount = data.row_count || 1;
+    for (const [col, info] of Object.entries(data.stats || {})) {
+      const isKey = data.minimal_combinations?.some(combo => combo.length === 1 && combo[0] === col);
+      html += `<tr>
+        <td class="mono">${escHtml(col)}</td>
+        <td>${info.unique_count.toLocaleString()}</td>
+        <td>${(info.uniqueness * 100).toFixed(1)}%</td>
+        <td>${isKey ? '<span class="badge green">Yes</span>' : '<span class="badge">No</span>'}</td>
+      </tr>`;
+    }
+    html += `</tbody></table></div>`;
+    
+    resultsEl.innerHTML = html;
+    resultsEl.classList.remove('hidden');
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── Utility ────────────────────────────────────────────────────────────────
+async function extractError(res) {
+  let msg = `HTTP ${res.status}`;
+  try { const j = await res.json(); msg = j.error || msg; } catch {}
+  return msg;
+}
+
+function triggerDownload(blob, defaultFilename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = defaultFilename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
