@@ -242,12 +242,11 @@ export function calculatedColumns(df, newColumnName, expression) {
   });
 }
 
-// ── NEW: Transpose Data ────────────────────────────────────────────────────
+// ── Transpose Data ─────────────────────────────────────────────────────────
 export function transposeData(df) {
   if (!df || df.length === 0) return [];
   const originalCols = Object.keys(df[0]);
   const result = [];
-  
   for (const col of originalCols) {
     const newRow = { "Original_Column": col };
     df.forEach((row, idx) => {
@@ -258,23 +257,19 @@ export function transposeData(df) {
   return result;
 }
 
-// ── NEW: Pivot Table Generator ─────────────────────────────────────────────
+// ── Pivot Table Generator ──────────────────────────────────────────────────
 export function pivotData(df, groupCol, valCol, aggFunc) {
   const groups = {};
-  
-  // 1. Group records
   df.forEach(row => {
     const k = String(row[groupCol] ?? 'Unknown');
     if (!groups[k]) groups[k] = { count: 0, values: [] };
     groups[k].count++;
-    
     if (valCol) {
       const v = Number(row[valCol]);
       if (!isNaN(v)) groups[k].values.push(v);
     }
   });
 
-  // 2. Aggregate
   const result = [];
   for (const [k, data] of Object.entries(groups)) {
     let aggVal = 0;
@@ -287,14 +282,77 @@ export function pivotData(df, groupCol, valCol, aggFunc) {
       else if (aggFunc === 'max') aggVal = Math.max(...vals);
       else if (aggFunc === 'min') aggVal = Math.min(...vals);
     }
-    result.push({ 
-      [groupCol]: k, 
-      [`${aggFunc}_${valCol || 'records'}`]: +aggVal.toFixed(4) 
-    });
+    result.push({ [groupCol]: k, [`${aggFunc}_${valCol || 'records'}`]: +aggVal.toFixed(4) });
   }
-  
-  // Sort alphabetically by the group key to make the table readable
   return result.sort((a, b) => String(a[groupCol]).localeCompare(String(b[groupCol])));
+}
+
+// ── NEW: Data Merge / Join ─────────────────────────────────────────────────
+export function dataMergeJoin(df1, df2, key1, key2, joinType) {
+  const map2 = new Map();
+  // VLOOKUP behavior: keep first match found in the right table
+  for (const row of df2) {
+    const k = String(row[key2] ?? '');
+    if (!map2.has(k)) map2.set(k, row);
+  }
+
+  const map1 = new Map();
+  for (const row of df1) {
+     const k = String(row[key1] ?? '');
+     if (!map1.has(k)) map1.set(k, row);
+  }
+
+  const df1Cols = df1.length > 0 ? Object.keys(df1[0]) : [];
+  const df2Cols = df2.length > 0 ? Object.keys(df2[0]) : [];
+  const result = [];
+
+  const combineRows = (r1, r2) => {
+    const out = { ...r1 };
+    if (r2) {
+      for (const c of df2Cols) {
+        if (c === key2 && joinType !== 'outer' && joinType !== 'right') continue;
+        const outCol = df1Cols.includes(c) ? `${c}_SourceB` : c;
+        out[outCol] = r2[c];
+      }
+    } else {
+      for (const c of df2Cols) {
+         if (c === key2) continue;
+         const outCol = df1Cols.includes(c) ? `${c}_SourceB` : c;
+         out[outCol] = null;
+      }
+    }
+    return out;
+  };
+
+  if (joinType === 'left' || joinType === 'inner') {
+    for (const r1 of df1) {
+      const k = String(r1[key1] ?? '');
+      const r2 = map2.get(k);
+      if (joinType === 'inner' && !r2) continue;
+      result.push(combineRows(r1, r2));
+    }
+  } else if (joinType === 'right') {
+     for (const r2 of df2) {
+        const k = String(r2[key2] ?? '');
+        const r1 = map1.get(k);
+        result.push(combineRows(r1 || {}, r2));
+     }
+  } else if (joinType === 'outer') {
+     const seenRightKeys = new Set();
+     for (const r1 of df1) {
+        const k = String(r1[key1] ?? '');
+        const r2 = map2.get(k);
+        if (r2) seenRightKeys.add(k);
+        result.push(combineRows(r1, r2));
+     }
+     for (const r2 of df2) {
+        const k = String(r2[key2] ?? '');
+        if (!seenRightKeys.has(k)) {
+           result.push(combineRows({}, r2));
+        }
+     }
+  }
+  return result;
 }
 
 // ── Anonymization ──────────────────────────────────────────────────────────
