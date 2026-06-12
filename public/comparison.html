@@ -69,6 +69,8 @@
 
     .btn-run { background: #0066cc; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: background 0.2s; }
     .btn-run:hover { background: #0052a3; }
+    .btn-secondary { background: #2d3142; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: background 0.2s; }
+    .btn-secondary:hover { background: #3b4056; }
 
     .alert { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-top: 16px; display: none; }
     .alert.success { background: rgba(46, 204, 113, 0.1); color: #2ecc71; border: 1px solid rgba(46, 204, 113, 0.2); display: block; }
@@ -91,6 +93,23 @@
     .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #2d3142; color: #a0aec0; }
     .badge.green { background: rgba(46, 204, 113, 0.15); color: #2ecc71; }
 
+    /* Pipeline Wizard Styles */
+    #workspace-pipeline { display: none; }
+    .pipeline-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; background: #1a1d29; padding: 20px; border-radius: 12px; border: 1px solid #2d3142; }
+    .pipe-step-indicator { display: flex; gap: 15px; align-items: center; }
+    .pipe-step-dot { width: 30px; height: 30px; border-radius: 50%; background: #2d3142; color: #8f9bb3; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
+    .pipe-step-dot.active { background: #e67e22; color: #fff; box-shadow: 0 0 10px rgba(230,126,34,0.5); }
+    .pipe-step-dot.done { background: #2ecc71; color: #fff; }
+    .pipe-step-line { height: 2px; width: 40px; background: #2d3142; }
+    .pipe-step-line.done { background: #2ecc71; }
+    
+    .pipe-panel { display: none; }
+    .pipe-panel.active { display: block; animation: fadeIn 0.3s ease-in-out; }
+    
+    .transform-rule { display: flex; gap: 10px; align-items: center; background: #0b0c10; padding: 10px; border-radius: 6px; border: 1px solid #2d3142; margin-bottom: 10px; }
+    .btn-icon { background: transparent; border: none; color: #e74c3c; cursor: pointer; font-size: 16px; }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -121,10 +140,10 @@
 
     <div class="content" id="dashboard">
       <div class="grid" style="margin-bottom: 20px;">
-        <div class="tool-card disabled" style="background: linear-gradient(145deg, #1a1d29, #24283b);">
+        <div class="tool-card" onclick="openPipeline()" style="background: linear-gradient(145deg, #1a1d29, #24283b); border-color: #e67e22;">
           <div class="tool-icon" style="color:#e67e22; background: rgba(230,126,34,0.1);">📝</div>
           <h4>Data Readiness Pipeline</h4>
-          <p>Guided 5-stage workflow: analyze shape, triage gaps, discover keys, transform, and generate PDF reports. (Coming Next!)</p>
+          <p>Guided 5-stage workflow: analyze shape, triage gaps, discover keys, queue transformations, and generate clean reports.</p>
         </div>
       </div>
 
@@ -213,7 +232,6 @@
           <p>Convert PDF documents to editable Word (.docx) format.</p>
         </div>
       </div>
-
     </div>
 
     <div class="content" id="workspace">
@@ -251,11 +269,124 @@
       </div>
 
       <div class="input-panel" id="ws-options"></div>
-
       <button class="btn-run" id="btn-run-tool">Run Tool</button>
       <div id="ws-alert"></div>
-
       <div id="ws-results" class="hidden"></div>
+    </div>
+
+    <div class="content" id="workspace-pipeline">
+      <div class="ws-header">
+        <button class="btn-back" onclick="closePipeline()">&#8592; Exit Pipeline</button>
+        <h2 style="font-size: 20px; color:#e67e22;">Data Readiness Pipeline Wizard</h2>
+      </div>
+
+      <div class="pipeline-nav">
+        <div class="pipe-step-indicator">
+          <div class="pipe-step-dot active" id="p-dot-1">1</div><div class="pipe-step-line" id="p-line-1"></div>
+          <div class="pipe-step-dot" id="p-dot-2">2</div><div class="pipe-step-line" id="p-line-2"></div>
+          <div class="pipe-step-dot" id="p-dot-3">3</div><div class="pipe-step-line" id="p-line-3"></div>
+          <div class="pipe-step-dot" id="p-dot-4">4</div><div class="pipe-step-line" id="p-line-4"></div>
+          <div class="pipe-step-dot" id="p-dot-5">5</div>
+        </div>
+        <div style="font-weight:600; color:#8f9bb3;" id="p-step-title">Stage 1: Ingestion</div>
+      </div>
+
+      <div id="p-alert" class="alert"></div>
+
+      <div class="pipe-panel active" id="p-stage-1">
+        <div class="input-panel">
+          <h3 style="margin-bottom: 15px; color:#fff;">Select Data Source</h3>
+          <div class="toggle-container">
+            <div class="toggle-btn active" id="p-btn-file" onclick="setPipeMode('file')">📁 Upload File</div>
+            <div class="toggle-btn" id="p-btn-live" onclick="setPipeMode('live')">⚡ Live API Pull</div>
+          </div>
+          <div id="p-panel-file">
+            <div class="drop-zone">
+              <input type="file" id="p-file" accept=".csv,.xlsx,.xls" onchange="document.getElementById('p-file-name').innerText = this.files[0] ? this.files[0].name : ''" />
+              <div style="font-size:32px; margin-bottom:10px;">📄</div>
+              <div style="font-weight:600; color:#e2e8f0;">Drop a file here or click to browse</div>
+              <div id="p-file-name" style="margin-top:10px; color:#4da6ff; font-family:monospace;"></div>
+            </div>
+          </div>
+          <div id="p-panel-live" class="hidden">
+            <div class="row-flex">
+              <div class="form-group"><label>Table Name</label><input type="text" id="p-table" placeholder="e.g. incident"></div>
+              <div class="form-group"><label>Encoded Query</label><input type="text" id="p-query" placeholder="e.g. active=true"></div>
+            </div>
+          </div>
+        </div>
+        <div style="text-align: right;"><button class="btn-run" onclick="pipeRunStep2()">Next: Analyze Shape &rarr;</button></div>
+      </div>
+
+      <div class="pipe-panel" id="p-stage-2">
+        <div class="input-panel">
+          <h3 style="margin-bottom: 15px; color:#fff;">Dataset Shape & Triage Analysis</h3>
+          <p style="color:#8f9bb3; font-size:13px; margin-bottom:20px;">Review the health of your dataset before moving forward.</p>
+          <div id="p-results-2"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between;">
+          <button class="btn-secondary" onclick="pipeGoToStep(1)">&larr; Back</button>
+          <button class="btn-run" onclick="pipeRunStep3()">Next: Identity Discovery &rarr;</button>
+        </div>
+      </div>
+
+      <div class="pipe-panel" id="p-stage-3">
+        <div class="input-panel">
+          <h3 style="margin-bottom: 15px; color:#fff;">Natural Key Discovery</h3>
+          <p style="color:#8f9bb3; font-size:13px; margin-bottom:20px;">The algorithm has identified the following column combinations that uniquely identify rows.</p>
+          <div id="p-results-3"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between;">
+          <button class="btn-secondary" onclick="pipeGoToStep(2)">&larr; Back</button>
+          <button class="btn-run" onclick="pipeGoToStep(4)">Next: Transformations &rarr;</button>
+        </div>
+      </div>
+
+      <div class="pipe-panel" id="p-stage-4">
+        <div class="input-panel">
+          <h3 style="margin-bottom: 15px; color:#fff;">Queue Transformations</h3>
+          <p style="color:#8f9bb3; font-size:13px; margin-bottom:20px;">Add column-level operations that will be executed in the final export.</p>
+          
+          <div style="background: #0b0c10; padding:15px; border-radius:8px; border: 1px solid #2d3142; margin-bottom: 20px;">
+            <div class="row-flex" style="align-items: flex-end;">
+              <div class="form-group" style="margin:0;"><label>Action</label>
+                <select id="p-t-action">
+                  <option value="trim">Trim Whitespace</option>
+                  <option value="lowercase">Convert Lowercase</option>
+                  <option value="uppercase">Convert Uppercase</option>
+                  <option value="remove_special">Remove Special Chars</option>
+                  <option value="drop">Drop/Delete Columns</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin:0; flex:2;"><label>Columns (Comma separated)</label>
+                <input type="text" id="p-t-cols" placeholder="e.g. description, comments">
+              </div>
+              <button class="btn-secondary" onclick="pipeAddTransform()">+ Add Rule</button>
+            </div>
+          </div>
+
+          <div id="p-transform-list"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between;">
+          <button class="btn-secondary" onclick="pipeGoToStep(3)">&larr; Back</button>
+          <button class="btn-run" onclick="pipeGoToStep(5)">Next: Final Generation &rarr;</button>
+        </div>
+      </div>
+
+      <div class="pipe-panel" id="p-stage-5">
+        <div class="input-panel" style="text-align: center; padding: 60px 20px;">
+          <div style="font-size: 48px; margin-bottom: 20px;">🚀</div>
+          <h3 style="margin-bottom: 15px; color:#fff;">Ready for Generation</h3>
+          <p style="color:#8f9bb3; font-size:14px; margin-bottom:30px; max-width: 500px; margin-left: auto; margin-right: auto;">
+            The pipeline is fully configured. Click below to execute all queued transformations and generate the final sanitized export and report.
+          </p>
+          <button class="btn-run" style="font-size: 16px; padding: 16px 32px; background:#e67e22;" onclick="pipeExecute()">Execute Pipeline & Download</button>
+        </div>
+        <div style="display:flex; justify-content:flex-start;">
+          <button class="btn-secondary" onclick="pipeGoToStep(4)">&larr; Back</button>
+        </div>
+      </div>
+
     </div>
   </div>
 
