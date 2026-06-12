@@ -35,64 +35,53 @@ export function normaliseInstanceUrl(raw) {
 // ---------------------------------------------------------------------------
 // High-Performance Concurrent Fetcher
 // ---------------------------------------------------------------------------
-// Bypasses cloud timeouts by running 4 concurrent API streams.
 async function fastFetchAll(client, endpoint, query, fields) {
-  const PAGE_SIZE = 10000;
+  const PAGE_SIZE = 2500; // Lowered to 2500 to prevent ServiceNow transaction timeouts
   let total = NaN;
   
+  const baseParams = {
+    sysparm_exclude_reference_link: true,
+    sysparm_fields: fields
+  };
+  if (query) baseParams.sysparm_query = query;
+
   try {
     const initial = await client.get(endpoint, {
-      params: { sysparm_query: query, sysparm_limit: 1, sysparm_exclude_reference_link: true }
+      params: { ...baseParams, sysparm_limit: 1 }
     });
-    total = parseInt(initial.headers['x-total-count'], 10);
+    if (initial.headers['x-total-count']) {
+      total = parseInt(initial.headers['x-total-count'], 10);
+    }
   } catch (err) {
     console.warn(`[FastFetch] Could not get x-total-count for ${endpoint}`);
   }
 
   const results = [];
 
-  // If ServiceNow gives us the total count, we can parallelize the download
   if (!isNaN(total) && total > 0) {
     console.log(`[FastFetch] ${endpoint} total records: ${total}. Fetching concurrently...`);
     const offsets = [];
     for (let i = 0; i < total; i += PAGE_SIZE) offsets.push(i);
 
-    const CONCURRENCY = 4; // Run 4 page fetches at the exact same time
+    const CONCURRENCY = 3; 
     for (let i = 0; i < offsets.length; i += CONCURRENCY) {
       const batch = offsets.slice(i, i + CONCURRENCY);
       const promises = batch.map(offset => client.get(endpoint, {
-        params: {
-          sysparm_query: query,
-          sysparm_limit: PAGE_SIZE,
-          sysparm_offset: offset,
-          sysparm_fields: fields,
-          sysparm_exclude_reference_link: true
-        }
-      }).catch(e => {
+        params: { ...baseParams, sysparm_limit: PAGE_SIZE, sysparm_offset: offset }
+      }).then(res => res.data?.result || []).catch(e => {
         console.error(`[FastFetch] Batch failed at offset ${offset}:`, e.message);
-        return { data: { result: [] } }; // Failsafe
+        return [];
       }));
       
       const batchRes = await Promise.all(promises);
-      batchRes.forEach(r => {
-        if (r.data && Array.isArray(r.data.result)) {
-          results.push(...r.data.result);
-        }
-      });
+      batchRes.forEach(arr => results.push(...arr));
     }
   } else {
-    // Fallback to sequential fetching if x-total-count is hidden by ACLs
     console.log(`[FastFetch] ${endpoint} falling back to sequential fetch...`);
     let offset = 0;
     while (true) {
       const res = await client.get(endpoint, {
-        params: {
-          sysparm_query: query,
-          sysparm_limit: PAGE_SIZE,
-          sysparm_offset: offset,
-          sysparm_fields: fields,
-          sysparm_exclude_reference_link: true
-        }
+        params: { ...baseParams, sysparm_limit: PAGE_SIZE, sysparm_offset: offset }
       });
       const page = res.data?.result || [];
       results.push(...page);
@@ -102,7 +91,6 @@ async function fastFetchAll(client, endpoint, query, fields) {
   }
   return results;
 }
-
 
 // ---------------------------------------------------------------------------
 // Connection test
@@ -131,7 +119,10 @@ export async function testServiceNowConnection(instanceUrl, username, password) 
 
 export async function fetchServiceNowSchema(instanceUrl, username, password, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
-  const cacheKey = `${url}_${opts.includeCore ? 'core' : 'custom'}`;
+  // THE FIX: Check for both snake_case and camelCase parameters
+  const includeCore = opts.includeCore ?? opts.include_core ?? false;
+  
+  const cacheKey = `${url}_${includeCore ? 'core' : 'custom'}`;
   
   if (BACKEND_SCHEMA_CACHE.has(cacheKey)) {
     console.log(`[CACHE HIT] Instantly returned schema for ${cacheKey}`);
@@ -139,7 +130,8 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   }
   
   console.log(`[CACHE MISS] Fetching fresh schema for ${cacheKey}...`);
-  const schema = await fetchServiceNowSchemaInternal(url, username, password, opts);
+  // Ensure the properly resolved boolean is passed down
+  const schema = await fetchServiceNowSchemaInternal(url, username, password, { ...opts, includeCore });
   
   BACKEND_SCHEMA_CACHE.set(cacheKey, schema);
   return schema;
@@ -149,8 +141,8 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
 async function fetchServiceNowSchemaInternal(url, username, password, opts) {
   const client = buildClient(url, username, password);
   
-  const tableLimit  = opts.tableLimit  ?? Infinity;
-  const includeCore = opts.includeCore ?? false;
+  const tableLimit  = opts.tableLimit ?? Infinity;
+  const includeCore = opts.includeCore;
 
   // 1. Fetch all tables concurrently
   let allTablesRaw = [];
@@ -158,6 +150,11 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
     allTablesRaw = await fastFetchAll(client, '/api/now/table/sys_db_object', '', 'name,label,sys_id,super_class');
   } catch (err) {
     throw new Error(`Failed to fetch table list: ${err.message}`);
+  }
+
+  // Failsafe to prevent silent "0 tables" issues
+  if (!allTablesRaw || allTablesRaw.length === 0) {
+    throw new Error("ServiceNow API returned 0 tables. Verify user roles, API permissions, or transaction quotas.");
   }
 
   // 2. Filter tables based on user settings
@@ -175,7 +172,7 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
 
   const tableNameSet = new Set(tablesRaw.map(t => t.name));
 
-  // 3. Fetch entire dictionary concurrently (Massive speed boost over nameIN queries)
+  // 3. Fetch entire dictionary concurrently (Massive speed boost)
   let dictRaw = [];
   if (tableNameSet.size > 0) {
     try {
@@ -191,7 +188,6 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
     if (!col.element) continue; 
     const tbl = col.name;
     
-    // Only process the columns for the tables we actually care about
     if (!tableNameSet.has(tbl)) continue;
 
     if (!columnsByTable[tbl]) columnsByTable[tbl] = [];
