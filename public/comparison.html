@@ -105,7 +105,6 @@
   </nav>
 
   <div class="main-layout">
-    <!-- Global Credential Sidebar -->
     <div class="sidebar">
       <div>
         <h3><span style="color:#e67e22;">🔑</span> Global Credentials</h3>
@@ -120,8 +119,15 @@
       </div>
     </div>
 
-    <!-- Main Content Area -->
     <div class="content" id="dashboard">
+      <div class="grid" style="margin-bottom: 20px;">
+        <div class="tool-card disabled" style="background: linear-gradient(145deg, #1a1d29, #24283b);">
+          <div class="tool-icon" style="color:#e67e22; background: rgba(230,126,34,0.1);">📝</div>
+          <h4>Data Readiness Pipeline</h4>
+          <p>Guided 5-stage workflow: analyze shape, triage gaps, discover keys, transform, and generate PDF reports. (Coming Next!)</p>
+        </div>
+      </div>
+
       <div class="section-title"><span style="color:#a78bfa;">🔍</span> Data Quality & Analysis</div>
       <div class="grid">
         <div class="tool-card" onclick="openTool('duplicate-finder')">
@@ -198,16 +204,24 @@
           <p>VLOOKUP-style joins. Merge two separate datasets (files or live pulls) using Inner, Left, Right, or Outer logic.</p>
         </div>
       </div>
+
+      <div class="section-title"><span style="color:#2ecc71;">📄</span> Document Conversion</div>
+      <div class="grid" style="margin-bottom: 40px;">
+        <div class="tool-card" onclick="openTool('pdf-to-word')">
+          <div class="tool-icon" style="color:#2ecc71;">📝</div>
+          <h4>PDF to Word</h4>
+          <p>Convert PDF documents to editable Word (.docx) format.</p>
+        </div>
+      </div>
+
     </div>
 
-    <!-- Universal Tool Workspace -->
     <div class="content" id="workspace">
       <div class="ws-header">
         <button class="btn-back" onclick="closeTool()">&#8592; Back to Dashboard</button>
         <h2 id="ws-title" style="font-size: 20px;">Tool Name</h2>
       </div>
 
-      <!-- Standard Single-Source Header (Hidden dynamically on dual-source tools) -->
       <div id="ws-standard-header">
         <div class="toggle-container" id="ws-toggles">
           <div class="toggle-btn active" id="btn-mode-file" onclick="setMode('file')">📁 Upload File</div>
@@ -216,7 +230,7 @@
 
         <div class="input-panel" id="panel-file">
           <div class="drop-zone">
-            <input type="file" id="ws-file" accept=".csv,.xlsx,.xls" onchange="document.getElementById('ws-file-name').innerText = this.files[0] ? this.files[0].name : ''" />
+            <input type="file" id="ws-file" accept=".csv,.xlsx,.xls,.pdf" onchange="document.getElementById('ws-file-name').innerText = this.files[0] ? this.files[0].name : ''" />
             <div style="font-size:32px; margin-bottom:10px;">📄</div>
             <div style="font-weight:600; color:#e2e8f0;">Drop a file here or click to browse</div>
             <div id="ws-file-name" style="margin-top:10px; color:#4da6ff; font-family:monospace;"></div>
@@ -236,13 +250,11 @@
         </div>
       </div>
 
-      <!-- Tool Specific Options (This will inject the dual-pane UI for Merge/Join) -->
       <div class="input-panel" id="ws-options"></div>
 
       <button class="btn-run" id="btn-run-tool">Run Tool</button>
       <div id="ws-alert"></div>
 
-      <!-- Results Rendering Section -->
       <div id="ws-results" class="hidden"></div>
     </div>
   </div>
