@@ -7,19 +7,9 @@ import { Router } from 'express';
 import multer from 'multer';
 import { fetchServiceNowTableData } from '../utils/servicenowAPI.js';
 import {
-  compareSchemas,
-  compareData,
-  scrubDataFrame,
-  analyzeDataFrame,
-  findNaturalKeys,
-  parseFileBuffer,
-  buildExcelReport,
-  splitDataFrame,
-  normalizeColumns,
-  findAndReplace,
-  columnOperations,
-  rowFilter,
-  calculatedColumns
+  compareSchemas, compareData, scrubDataFrame, analyzeDataFrame, findNaturalKeys, parseFileBuffer,
+  buildExcelReport, splitDataFrame, normalizeColumns, findAndReplace, columnOperations,
+  rowFilter, calculatedColumns, transposeData, pivotData
 } from '../utils/dataProcessing.js';
 
 const router = Router();
@@ -47,211 +37,188 @@ async function getDataFrame(req) {
   throw new Error("No data source provided. Upload a file or provide instance credentials and a table name.");
 }
 
-// ── NEW: Row Filter ────────────────────────────────────────────────────────
+// ── NEW: Transpose Data ────────────────────────────────────────────────────
+router.post('/transpose-data', upload.single('file'), async (req, res) => {
+  try {
+    const df = await getDataFrame(req);
+    if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
+    
+    const transposed = transposeData(df);
+    
+    const sheets = { 'Transposed Data': transposed };
+    const xlsxBuffer = await buildExcelReport(sheets);
+    const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="transposed_${fileName}.xlsx"`);
+    res.send(Buffer.from(xlsxBuffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── NEW: Pivot Table ───────────────────────────────────────────────────────
+router.post('/pivot-data', upload.single('file'), async (req, res) => {
+  try {
+    const df = await getDataFrame(req);
+    if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
+    
+    const { group_col, value_col, agg_func } = req.body;
+    if (!group_col) return res.status(400).json({ error: 'Group By column is required.' });
+
+    const pivoted = pivotData(df, group_col, value_col, agg_func || 'count');
+
+    const sheets = { 'Pivot Table': pivoted };
+    const xlsxBuffer = await buildExcelReport(sheets);
+    const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="pivot_${fileName}.xlsx"`);
+    res.send(Buffer.from(xlsxBuffer));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Existing Routes ────────────────────────────────────────────────────────
 router.post('/row-filter', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
     const { filter_col, filter_op, filter_val } = req.body;
     if (!filter_col) return res.status(400).json({ error: 'Filter column is required.' });
-
     const filteredData = rowFilter(df, filter_col, filter_op, filter_val);
-
     const sheets = { 'Filtered Data': filteredData };
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="filtered_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── NEW: Calculated Columns ────────────────────────────────────────────────
 router.post('/calculated-columns', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
     const { new_col_name, expression } = req.body;
     if (!new_col_name || !expression) return res.status(400).json({ error: 'New column name and expression are required.' });
-
     const calculatedData = calculatedColumns(df, new_col_name, expression);
-
     const sheets = { 'Calculated Data': calculatedData };
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="calc_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Find & Replace ─────────────────────────────────────────────────────────
 router.post('/find-replace', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
     let columns = [];
     try { columns = JSON.parse(req.body.columns || '[]'); } catch {}
     if (columns.length === 0) columns = Object.keys(df[0]); 
-
     const searchStr = req.body.search_str || '';
     const replaceStr = req.body.replace_str || '';
     const useRegex = req.body.use_regex === 'true';
     const matchCase = req.body.match_case === 'true';
-
     const processedData = findAndReplace(df, columns, searchStr, replaceStr, useRegex, matchCase);
-
     const sheets = { 'Modified Data': processedData };
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="replaced_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Column Operations ──────────────────────────────────────────────────────
 router.post('/column-ops', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
-    let dropCols = [];
-    let renameCols = {};
+    let dropCols = []; let renameCols = {};
     try { dropCols = JSON.parse(req.body.drop_columns || '[]'); } catch {}
     try { renameCols = JSON.parse(req.body.rename_columns || '{}'); } catch {}
-
     const processedData = columnOperations(df, { drop: dropCols, rename: renameCols });
-
     const sheets = { 'Modified Data': processedData };
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="col_ops_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── File Splitter ──────────────────────────────────────────────────────────
 router.post('/split-data', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
     const chunkSize = parseInt(req.body.chunk_size, 10) || 5000;
     const chunks = splitDataFrame(df, chunkSize);
-    
     const sheets = {};
-    chunks.forEach((chunk, index) => {
-      sheets[`Chunk_${index + 1}`] = chunk;
-    });
-
+    chunks.forEach((chunk, index) => { sheets[`Chunk_${index + 1}`] = chunk; });
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="split_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Column Normalizer ──────────────────────────────────────────────────────
 router.post('/normalize-data', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
     let columns = [];
     try { columns = JSON.parse(req.body.columns || '[]'); } catch {}
     if (columns.length === 0) return res.status(400).json({ error: 'Please specify at least one column.' });
-
     const action = req.body.action || 'trim';
     const normalizedData = normalizeColumns(df, columns, action);
-
     const sheets = { 'Normalized Data': normalizedData };
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="normalized_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Duplicate Finder ───────────────────────────────────────────────────────
 router.post('/find-duplicates', upload.single('file'), async (req, res) => {
   try {
     let checkColumns = [];
-    try { checkColumns = JSON.parse(req.body.check_columns || '[]'); } catch { /* ignore */ }
-    
+    try { checkColumns = JSON.parse(req.body.check_columns || '[]'); } catch {}
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-
     const colsToCompare = checkColumns.length > 0 ? checkColumns : Object.keys(df[0]);
-    const seen = new Set();
-    const uniqueRows = [];
-    const duplicateRows = [];
-
+    const seen = new Set(); const uniqueRows = []; const duplicateRows = [];
     for (const row of df) {
       const hash = colsToCompare.map(c => String(row[c] ?? '')).join('||');
-      if (seen.has(hash)) {
-        duplicateRows.push(row);
-      } else {
-        seen.add(hash);
-        uniqueRows.push(row);
-      }
+      if (seen.has(hash)) { duplicateRows.push(row); } else { seen.add(hash); uniqueRows.push(row); }
     }
-
     const sheets = { 'Unique Data': uniqueRows, 'Removed Duplicates': duplicateRows };
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="deduplicated_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Anonymizer / Scrub Data ───────────────────────────────────────────────
 router.post('/scrub-data', upload.single('file'), async (req, res) => {
   try {
     let columnsToScrub = [];
-    try { columnsToScrub = JSON.parse(req.body.columns_to_scrub || '[]'); } catch { /* ignore */ }
+    try { columnsToScrub = JSON.parse(req.body.columns_to_scrub || '[]'); } catch {}
     if (columnsToScrub.length === 0) return res.status(400).json({ error: 'columns_to_scrub must be a non-empty JSON array.' });
-
     const preserveRelationships = req.body.preserve_relationships !== 'false';
-    const exportMapping         = req.body.export_mapping !== 'false';
-
+    const exportMapping = req.body.export_mapping !== 'false';
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-
     const cols = Object.keys(df[0]);
     const missing = columnsToScrub.filter(c => !cols.includes(c));
     if (missing.length > 0) return res.status(400).json({ error: `Columns not found in dataset: ${missing.join(', ')}` });
-
     const { data: scrubbed, mapping } = scrubDataFrame(df, columnsToScrub, preserveRelationships);
-
     const sheets = { 'Anonymized Data': scrubbed };
     if (exportMapping) {
       for (const [col, map] of Object.entries(mapping)) {
@@ -259,50 +226,37 @@ router.post('/scrub-data', upload.single('file'), async (req, res) => {
         sheets[sheetName] = Object.entries(map).map(([original, anonymized]) => ({ original, anonymized }));
       }
     }
-
     const xlsxBuffer = await buildExcelReport(sheets);
     const fileName = req.file ? req.file.originalname.replace(/\.[^.]+$/, '') : req.body.table_name;
-
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="scrubbed_${fileName}.xlsx"`);
     res.send(Buffer.from(xlsxBuffer));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Analyze Data ───────────────────────────────────────────────────────────
 router.post('/analyze-data', upload.single('file'), async (req, res) => {
   try {
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
     const analysis = analyzeDataFrame(df);
     const fileName = req.file ? req.file.originalname : req.body.table_name;
     res.json({ success: true, file_name: fileName, ...analysis });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Find Natural Keys ──────────────────────────────────────────────────────
 router.post('/find-keys', upload.single('file'), async (req, res) => {
   try {
     let selectedColumns = [];
-    try { selectedColumns = JSON.parse(req.body.selected_columns || '[]'); } catch { /* ignore */ }
-    
+    try { selectedColumns = JSON.parse(req.body.selected_columns || '[]'); } catch {}
     const df = await getDataFrame(req);
     if (df.length === 0) return res.status(400).json({ error: 'Data source returned 0 rows.' });
-    
     const result = findNaturalKeys(df, selectedColumns);
     const fileName = req.file ? req.file.originalname : req.body.table_name;
     res.json({ success: true, file_name: fileName, row_count: df.length, ...result });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Legacy File-Only Schemas
+// Legacy Comparisons
 router.post('/compare/schemas', upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]), async (req, res) => {
   try {
     const f1 = req.files?.file1?.[0]; const f2 = req.files?.file2?.[0];
