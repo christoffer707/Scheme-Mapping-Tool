@@ -5,6 +5,8 @@
 
 import { Router } from 'express';
 import multer from 'multer';
+import pdfParse from 'pdf-parse';
+import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { fetchServiceNowTableData } from '../utils/servicenowAPI.js';
 import {
   compareSchemas, compareData, scrubDataFrame, analyzeDataFrame, findNaturalKeys, parseFileBuffer,
@@ -18,10 +20,10 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, 
   fileFilter(_req, file, cb) {
-    const allowed = ['.csv', '.xlsx', '.xls'];
+    const allowed = ['.csv', '.xlsx', '.xls', '.pdf'];
     const ext = '.' + file.originalname.split('.').pop().toLowerCase();
     if (allowed.includes(ext)) return cb(null, true);
-    cb(new Error(`Unsupported file type: ${ext}. Allowed: ${allowed.join(', ')}`));
+    cb(new Error(`Unsupported file type: ${ext}.`));
   },
 });
 
@@ -37,10 +39,40 @@ async function getDataFrame(req) {
   throw new Error("No data source provided. Upload a file or provide instance credentials and a table name.");
 }
 
-// ── NEW: Data Merge / Join (Dual-Source Architecture) ──────────────────────
+// ── Document Conversion ────────────────────────────────────────────────────
+router.post('/pdf-to-word', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Please upload a PDF file.' });
+    
+    // 1. Parse text from PDF
+    const pdfData = await pdfParse(req.file.buffer);
+    const lines = pdfData.text.split('\n');
+
+    // 2. Build Word Document
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: lines.map(line => new Paragraph({ children: [new TextRun(line)] }))
+      }]
+    });
+
+    // 3. Export as .docx buffer
+    const b64string = await Packer.toBase64String(doc);
+    const buffer = Buffer.from(b64string, 'base64');
+
+    const fileName = req.file.originalname.replace(/\.[^.]+$/, '');
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}.docx"`);
+    res.send(buffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Data Merge / Join ──────────────────────────────────────────────────────
 router.post('/merge-data', upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]), async (req, res) => {
   try {
-    // Isolated dataframe parser for dual-mode payloads
     const getDF = async (prefix) => {
       const mode = req.body[`mode${prefix}`];
       if (mode === 'file') {
@@ -284,33 +316,6 @@ router.post('/find-keys', upload.single('file'), async (req, res) => {
     const result = findNaturalKeys(df, selectedColumns);
     const fileName = req.file ? req.file.originalname : req.body.table_name;
     res.json({ success: true, file_name: fileName, row_count: df.length, ...result });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Legacy Comparisons
-router.post('/compare/schemas', upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]), async (req, res) => {
-  try {
-    const f1 = req.files?.file1?.[0]; const f2 = req.files?.file2?.[0];
-    if (!f1 || !f2) return res.status(400).json({ error: 'Both file1 and file2 are required.' });
-    const df1 = await parseFileBuffer(f1.buffer, f1.originalname);
-    const df2 = await parseFileBuffer(f2.buffer, f2.originalname);
-    const result = compareSchemas(df1, df2);
-    res.json({ success: true, file1_name: f1.originalname, file2_name: f2.originalname, ...result });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.post('/compare/data', upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]), async (req, res) => {
-  try {
-    const f1 = req.files?.file1?.[0]; const f2 = req.files?.file2?.[0];
-    if (!f1 || !f2) return res.status(400).json({ error: 'Both files are required.' });
-    let keyColumns = []; let compareColumns = [];
-    try { keyColumns = JSON.parse(req.body.key_columns || '[]'); } catch {}
-    try { compareColumns = JSON.parse(req.body.compare_columns || '[]'); } catch {}
-    if (keyColumns.length === 0) return res.status(400).json({ error: 'key_columns is required.' });
-    const df1 = await parseFileBuffer(f1.buffer, f1.originalname);
-    const df2 = await parseFileBuffer(f2.buffer, f2.originalname);
-    const result = compareData(df1, df2, keyColumns, compareColumns);
-    res.json({ success: true, file1_name: f1.originalname, file2_name: f2.originalname, key_columns: keyColumns, ...result });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
