@@ -118,6 +118,40 @@ function openTool(toolId) {
     $('btn-run-tool').onclick = runColumnNormalizer;
     $('btn-run-tool').innerText = 'Normalize & Download';
   }
+  else if (toolId === 'find-replace') {
+    titleEl.innerText = 'Find & Replace';
+    optionsEl.innerHTML = `
+      <div class="form-group">
+        <label>Target Columns <span style="color:#888;">(Comma-separated. Leave blank for all columns)</span></label>
+        <input type="text" id="ws-opt-cols" placeholder="e.g. description, short_description">
+      </div>
+      <div class="row-flex">
+        <div class="form-group"><label>Find what</label><input type="text" id="ws-opt-find" placeholder="Text or Regex"></div>
+        <div class="form-group"><label>Replace with</label><input type="text" id="ws-opt-replace" placeholder="Replacement text"></div>
+      </div>
+      <div class="checkbox-group">
+        <label class="checkbox-row"><input type="checkbox" id="ws-opt-regex"> Use Regular Expressions</label>
+        <label class="checkbox-row"><input type="checkbox" id="ws-opt-case"> Match Case</label>
+      </div>
+    `;
+    $('btn-run-tool').onclick = runFindReplace;
+    $('btn-run-tool').innerText = 'Find & Replace';
+  }
+  else if (toolId === 'column-operations') {
+    titleEl.innerText = 'Column Operations';
+    optionsEl.innerHTML = `
+      <div class="form-group">
+        <label>Drop Columns <span style="color:#888;">(Comma-separated. Columns to remove)</span></label>
+        <input type="text" id="ws-opt-drop" placeholder="e.g. sys_created_on, sys_updated_on">
+      </div>
+      <div class="form-group">
+        <label>Rename Columns <span style="color:#888;">(Format: old_name=new_name. One per line)</span></label>
+        <textarea id="ws-opt-rename" placeholder="e.g.&#10;sys_id=source_sys_id&#10;u_custom_field=mapped_field"></textarea>
+      </div>
+    `;
+    $('btn-run-tool').onclick = runColumnOperations;
+    $('btn-run-tool').innerText = 'Apply Operations & Download';
+  }
 }
 
 function closeTool() {
@@ -166,7 +200,74 @@ function buildPayload() {
   return fd;
 }
 
-// ── NEW: File Splitter ─────────────────────────────────────────────────────
+// ── NEW: Find & Replace ────────────────────────────────────────────────────
+async function runFindReplace() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Finding and replacing data...';
+
+  try {
+    const fd = buildPayload();
+    const cols = $('ws-opt-cols').value.trim();
+    const colArr = cols ? cols.split(',').map(c => c.trim()).filter(Boolean) : [];
+    
+    fd.append('columns', JSON.stringify(colArr));
+    fd.append('search_str', $('ws-opt-find').value);
+    fd.append('replace_str', $('ws-opt-replace').value);
+    fd.append('use_regex', $('ws-opt-regex').checked);
+    fd.append('match_case', $('ws-opt-case').checked);
+
+    const res = await fetch('/api/find-replace', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'find_replace_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your modified file has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── NEW: Column Operations ─────────────────────────────────────────────────
+async function runColumnOperations() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Applying operations...';
+
+  try {
+    const fd = buildPayload();
+    const drop = $('ws-opt-drop').value.trim();
+    const dropArr = drop ? drop.split(',').map(c => c.trim()).filter(Boolean) : [];
+    
+    const renameText = $('ws-opt-rename').value.trim();
+    const renameMap = {};
+    if (renameText) {
+      renameText.split('\n').forEach(line => {
+        const parts = line.split('=');
+        if (parts.length === 2) {
+          renameMap[parts[0].trim()] = parts[1].trim();
+        }
+      });
+    }
+
+    fd.append('drop_columns', JSON.stringify(dropArr));
+    fd.append('rename_columns', JSON.stringify(renameMap));
+
+    const res = await fetch('/api/column-ops', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'col_ops_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your modified file has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── Existing Tools ─────────────────────────────────────────────────────────
+
 async function runFileSplitter() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -188,7 +289,6 @@ async function runFileSplitter() {
   }
 }
 
-// ── NEW: Column Normalizer ─────────────────────────────────────────────────
 async function runColumnNormalizer() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -214,8 +314,6 @@ async function runColumnNormalizer() {
     alertEl.innerHTML = `❌ Error: ${err.message}`;
   }
 }
-
-// ── Existing Functions (Dupe, Anonymize, Analyze, Key Finder) ──────────────
 
 async function runDuplicateFinder() {
   const alertEl = $('ws-alert');
@@ -369,7 +467,6 @@ async function runKeyFinder() {
           <thead><tr><th>Column</th><th>Unique Count</th><th>Uniqueness %</th><th>Is Key?</th></tr></thead>
           <tbody>
     `;
-    const rowCount = data.row_count || 1;
     for (const [col, info] of Object.entries(data.stats || {})) {
       const isKey = data.minimal_combinations?.some(combo => combo.length === 1 && combo[0] === col);
       html += `<tr>
