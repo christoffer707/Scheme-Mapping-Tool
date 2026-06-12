@@ -11,6 +11,7 @@ const state = {
   inst2: { schema: null, network: null, connected: false, filterType: 'all', searchQuery: '' },
   schemaCompareResult: null,
   dataCompareResult:   null,
+  erdColorMode: 'compare' // New State: 'compare' or 'type'
 };
 
 // ── DOM helpers ────────────────────────────────────────────────────────────
@@ -102,7 +103,6 @@ async function apiPost(endpoint, body) {
 
 // ── Credential & State Memory ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  // Load saved creds & cache for inst1 and inst2
   [1, 2].forEach(n => {
     const saved = localStorage.getItem(`sn_live_cred_${n}`);
     if (saved) {
@@ -124,7 +124,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Auto-Restore Cached Schema from Session Storage
     const cachedLc = sessionStorage.getItem(`sn_lc_cache_${n}`);
     const currentUrl = $(`inst${n}-url`).value.trim();
     if (cachedLc && currentUrl) {
@@ -198,11 +197,81 @@ function filterTables(schema, filterType, searchQuery) {
   return filtered;
 }
 
+// ── Color Toggle Logic ─────────────────────────────────────────────────────
+
+window.toggleErdColors = function() {
+  // Flip the state
+  state.erdColorMode = state.erdColorMode === 'type' ? 'compare' : 'type';
+  
+  // Update the button UI
+  const btn = $('btn-toggle-colors');
+  if (btn) {
+     btn.innerHTML = state.erdColorMode === 'type' ? '🎨 Show Compare Colors' : '🎨 Show Base Colors';
+     btn.style.background = state.erdColorMode === 'type' ? '#e2e8f0' : '#d1fae5';
+     btn.style.color = state.erdColorMode === 'type' ? '#475569' : '#065f46';
+  }
+
+  // Instantly apply color updates to both networks without reloading them
+  [1, 2].forEach(n => {
+    if (!state[`inst${n}`].network || !state[`inst${n}`].schema) return;
+    
+    const nodesDataset = state[`inst${n}`].network.body.data.nodes;
+    let addedSet = new Set(), removedSet = new Set(), modifiedSet = new Set();
+    
+    // Grab the comparison sets if we are turning Compare Mode back ON
+    if (state.schemaCompareResult && state.erdColorMode === 'compare') {
+       const added = (state.schemaCompareResult.added_tables || []).map(t => t.name);
+       const removed = (state.schemaCompareResult.removed_tables || []).map(t => t.name);
+       const modified = (state.schemaCompareResult.modified_tables || []).map(t => t.table);
+       if (n === 1) { removedSet = new Set(removed); modifiedSet = new Set(modified); }
+       if (n === 2) { addedSet = new Set(added); modifiedSet = new Set(modified); }
+    }
+
+    const updates = [];
+    const tables = state[`inst${n}`].schema.raw_tables || state[`inst${n}`].schema.tables;
+    
+    // Inject the new colors instantly into the Vis.js memory array
+    nodesDataset.forEach(node => {
+      const tableName = node.id;
+      const tableObj = tables.find(t => t.name === tableName);
+      const c = getTableColor(tableName, tableObj);
+      let bg = c.bg, border = c.border;
+
+      if (state.erdColorMode === 'compare') {
+          if (addedSet.has(tableName)) { bg = '#1a7a4a'; border = '#155f3a'; }
+          else if (removedSet.has(tableName)) { bg = '#c0392b'; border = '#a93226'; }
+          else if (modifiedSet.has(tableName)) { bg = '#d68910'; border = '#b7770d'; }
+      }
+      updates.push({ 
+        id: tableName, 
+        color: { background: bg, border: border, highlight: {background: bg, border}, hover: {background: bg, border} } 
+      });
+    });
+    
+    nodesDataset.update(updates);
+
+    // Re-render the sidebars to add/remove the CSS highlight tags
+    let baseHighlights = {};
+    if (state.schemaCompareResult) {
+       const added = new Set((state.schemaCompareResult.added_tables || []).map(t => t.name));
+       const removed = new Set((state.schemaCompareResult.removed_tables || []).map(t => t.name));
+       const modified = new Set((state.schemaCompareResult.modified_tables || []).map(t => t.table));
+       if (n === 1) baseHighlights = { removed, modified };
+       if (n === 2) baseHighlights = { added, modified };
+    }
+    const filteredTables = filterTables(state[`inst${n}`].schema, state[`inst${n}`].filterType, state[`inst${n}`].searchQuery);
+    renderTableList(`table-list-inst${n}`, filteredTables, baseHighlights, n);
+  });
+};
+
 // ── ERD Rendering Engine ───────────────────────────────────────────────────
 
 function renderERD(containerId, schema, highlights = {}, tableList, noticeId, instanceNum) {
   const container = $(containerId);
   if (!container) return null;
+
+  // Intercept highlights: Nullify them if the user toggled off compare mode
+  const activeHighlights = state.erdColorMode === 'type' ? {} : highlights;
 
   const tables = tableList || schema.tables || [];
   const visibleTableNames = new Set(tables.map(t => t.name));
@@ -210,9 +279,9 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
   const nodes = [];
   const edges = []; 
 
-  const addedSet    = highlights.added    || new Set();
-  const removedSet  = highlights.removed  || new Set();
-  const modifiedSet = highlights.modified || new Set();
+  const addedSet    = activeHighlights.added    || new Set();
+  const removedSet  = activeHighlights.removed  || new Set();
+  const modifiedSet = activeHighlights.modified || new Set();
 
   const isLargeGraph = tables.length > 200;
   const goldenAngle = 137.508 * (Math.PI / 180);
@@ -333,9 +402,10 @@ function focusTableOnInstance(n, targetTableName, schema, highlights, tables) {
   const btn = $(`btn-back-macro-inst${n}`);
   if (btn) btn.classList.remove('hidden');
 
-  const addedSet    = highlights.added    || new Set();
-  const removedSet  = highlights.removed  || new Set();
-  const modifiedSet = highlights.modified || new Set();
+  const activeHighlights = state.erdColorMode === 'type' ? {} : highlights;
+  const addedSet    = activeHighlights.added    || new Set();
+  const removedSet  = activeHighlights.removed  || new Set();
+  const modifiedSet = activeHighlights.modified || new Set();
 
   const nodes = new vis.DataSet();
   const edges = new vis.DataSet();
@@ -439,9 +509,10 @@ function renderTableList(listId, tables, highlights = {}, n) {
   const container = $(listId);
   if (!container) return;
 
-  const addedSet    = highlights.added    || new Set();
-  const removedSet  = highlights.removed  || new Set();
-  const modifiedSet = highlights.modified || new Set();
+  const activeHighlights = state.erdColorMode === 'type' ? {} : highlights;
+  const addedSet    = activeHighlights.added    || new Set();
+  const removedSet  = activeHighlights.removed  || new Set();
+  const modifiedSet = activeHighlights.modified || new Set();
 
   container.innerHTML = '';
 
@@ -602,7 +673,18 @@ function wireErdFilter(n) {
       state[`inst${n}`].network.destroy();
     }
     showEl(`erd-net-inst${n}`);
-    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, {}, filteredTables, `erd-large-notice-inst${n}`, n);
+    
+    // Maintain highlights if a compare was already run
+    let highlights = {};
+    if (state.schemaCompareResult) {
+       const addedSet    = new Set((state.schemaCompareResult.added_tables    || []).map(t => t.name));
+       const removedSet  = new Set((state.schemaCompareResult.removed_tables || []).map(t => t.name));
+       const modifiedSet = new Set((state.schemaCompareResult.modified_tables || []).map(t => t.table));
+       if (n === 1) highlights = { removed: removedSet, modified: modifiedSet };
+       if (n === 2) highlights = { added: addedSet, modified: modifiedSet };
+    }
+    
+    state[`inst${n}`].network = renderERD(`erd-net-inst${n}`, schema, highlights, filteredTables, `erd-large-notice-inst${n}`, n);
   };
 
   let searchTimer = null;
@@ -652,6 +734,7 @@ async function compareSchemas() {
 
     stopFakeProgress('inst1', tid, true);
     state.schemaCompareResult = result;
+    state.erdColorMode = 'compare'; // Force comparison mode on successful run
     renderSchemaResults(result);
     $('btn-download-report').disabled = false;
   } catch (err) {
@@ -674,6 +757,34 @@ function renderSchemaResults(result) {
     <div class="stat-box amber"><div class="stat-val">${s.modified_count}</div><div class="stat-lbl">Modified</div></div>
   `;
 
+  // Inject the Color Toggle Button into the Top Actions Bar dynamically if it doesn't exist
+  let toggleBtn = $('btn-toggle-colors');
+  if (!toggleBtn) {
+    const downloadBtn = $('btn-download-report');
+    if (downloadBtn && downloadBtn.parentNode) {
+      toggleBtn = document.createElement('button');
+      toggleBtn.id = 'btn-toggle-colors';
+      toggleBtn.className = 'btn-secondary';
+      toggleBtn.style.marginLeft = '12px';
+      toggleBtn.style.padding = '8px 16px';
+      toggleBtn.style.borderRadius = '6px';
+      toggleBtn.style.border = '1px solid #d1d5db';
+      toggleBtn.style.background = '#d1fae5';
+      toggleBtn.style.color = '#065f46';
+      toggleBtn.style.fontWeight = '600';
+      toggleBtn.style.cursor = 'pointer';
+      toggleBtn.innerHTML = '🎨 Show Base Colors';
+      toggleBtn.onclick = window.toggleErdColors;
+      downloadBtn.parentNode.appendChild(toggleBtn);
+    }
+  }
+  if (toggleBtn) {
+    toggleBtn.style.display = 'inline-block';
+    toggleBtn.innerHTML = '🎨 Show Base Colors';
+    toggleBtn.style.background = '#d1fae5';
+    toggleBtn.style.color = '#065f46';
+  }
+
   const addedSet    = new Set((result.added_tables    || []).map(t => t.name));
   const removedSet  = new Set((result.removed_tables || []).map(t => t.name));
   const modifiedSet = new Set((result.modified_tables || []).map(t => t.table));
@@ -690,11 +801,11 @@ function renderSchemaResults(result) {
   }
 
   if (state.inst1.schema) {
-    const list1 = state.inst1.schema.raw_tables || state.inst1.schema.tables;
+    const list1 = filterTables(state.inst1.schema, state.inst1.filterType || 'all', state.inst1.searchQuery || '');
     renderTableList('table-list-inst1', list1, { removed: removedSet, modified: modifiedSet }, 1);
   }
   if (state.inst2.schema) {
-    const list2 = state.inst2.schema.raw_tables || state.inst2.schema.tables;
+    const list2 = filterTables(state.inst2.schema, state.inst2.filterType || 'all', state.inst2.searchQuery || '');
     renderTableList('table-list-inst2', list2, { added: addedSet, modified: modifiedSet }, 2);
   }
 
