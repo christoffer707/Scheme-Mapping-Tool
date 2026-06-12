@@ -69,8 +69,17 @@ function getHTMLPage() {
   <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet" type="text/css" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #333; overflow: hidden; }
-    .container { display: flex; height: 100vh; width: 100vw; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #333; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+    
+    /* ── Top Nav ──────────────────────────────────────────────────────── */
+    .topnav { background: #0a0a1a; padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; box-shadow: 0 2px 8px rgba(0,0,0,.4); flex-shrink: 0; z-index: 100; }
+    .topnav .brand { color: #fff; font-weight: 700; font-size: 15px; letter-spacing: .3px; text-decoration: none; }
+    .topnav a { color: #aab; font-size: 13px; text-decoration: none; transition: color .15s; font-weight: 600; }
+    .topnav a:hover, .topnav a.active { color: #4da6ff; }
+    .topnav .sep { color: #333; }
+
+    /* ── Main Layout ──────────────────────────────────────────────────── */
+    .container { display: flex; flex: 1; width: 100vw; overflow: hidden; }
     
     /* Sidebar */
     .sidebar { width: 350px; background: white; border-right: 1px solid #ddd; display: flex; flex-direction: column; z-index: 10; }
@@ -130,14 +139,19 @@ function getHTMLPage() {
   </style>
 </head>
 <body>
+
+  <nav class="topnav">
+    <a href="/" class="brand">⚙ Scheme Mapping Tool</a>
+    <span class="sep">|</span>
+    <a href="/" class="active">ERD Visualizer</a>
+    <a href="/comparison">Compare &amp; Analyze</a>
+    <a href="/live-compare">⚡ Live Compare</a>
+  </nav>
+
   <div class="container">
     <div class="sidebar">
       <div class="sidebar-header">
-        <h2 style="font-size: 18px; color: #333;">SN ERD Visualizer</h2>
-        <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
-          <a href="/comparison" style="font-size:12px; color:#0066cc; text-decoration:none; font-weight:600;">&#8644; Compare & Analyze Instances</a>
-          <a href="/live-compare" style="font-size:12px; color:#1a7a4a; text-decoration:none; font-weight:600;">&#9889; Live Dual-Instance Compare</a>
-        </div>
+        <h2 style="font-size: 18px; color: #333;">Connection</h2>
       </div>
       
       <div class="controls">
@@ -292,7 +306,6 @@ function getHTMLPage() {
       });
     }
 
-    // New helper to rapidly clear search input and reset the sidebar view
     function clearSearch() {
       const searchBox = document.getElementById('tableSearch');
       if (searchBox.value !== '') {
@@ -462,13 +475,9 @@ function getHTMLPage() {
       network.on("click", function (params) {
         if (params.nodes.length > 0) {
           const clickedNodeId = params.nodes[0];
-          
-          // Clear the sidebar search so the clicked item isn't accidentally hidden by an old query
           clearSearch();
-
           const sidebarItem = tableDOMNodes.find(item => item.name === clickedNodeId)?.element;
           selectAndRenderTable(clickedNodeId, sidebarItem);
-          
           if (sidebarItem) {
             sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
