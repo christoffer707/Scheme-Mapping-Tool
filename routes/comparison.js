@@ -5,8 +5,6 @@
 
 import { Router } from 'express';
 import multer from 'multer';
-import pdfParse from 'pdf-parse';
-import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { fetchServiceNowTableData } from '../utils/servicenowAPI.js';
 import {
   compareSchemas, compareData, scrubDataFrame, analyzeDataFrame, findNaturalKeys, parseFileBuffer,
@@ -20,7 +18,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, 
   fileFilter(_req, file, cb) {
-    const allowed = ['.csv', '.xlsx', '.xls', '.pdf'];
+    const allowed = ['.csv', '.xlsx', '.xls'];
     const ext = '.' + file.originalname.split('.').pop().toLowerCase();
     if (allowed.includes(ext)) return cb(null, true);
     cb(new Error(`Unsupported file type: ${ext}.`));
@@ -38,37 +36,6 @@ async function getDataFrame(req) {
   }
   throw new Error("No data source provided. Upload a file or provide instance credentials and a table name.");
 }
-
-// ── Document Conversion ────────────────────────────────────────────────────
-router.post('/pdf-to-word', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Please upload a PDF file.' });
-    
-    // 1. Parse text from PDF
-    const pdfData = await pdfParse(req.file.buffer);
-    const lines = pdfData.text.split('\n');
-
-    // 2. Build Word Document
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: lines.map(line => new Paragraph({ children: [new TextRun(line)] }))
-      }]
-    });
-
-    // 3. Export as .docx buffer
-    const b64string = await Packer.toBase64String(doc);
-    const buffer = Buffer.from(b64string, 'base64');
-
-    const fileName = req.file.originalname.replace(/\.[^.]+$/, '');
-
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}.docx"`);
-    res.send(buffer);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // ── Data Merge / Join ──────────────────────────────────────────────────────
 router.post('/merge-data', upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]), async (req, res) => {
