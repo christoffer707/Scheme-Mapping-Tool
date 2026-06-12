@@ -33,6 +33,78 @@ export function normaliseInstanceUrl(raw) {
 }
 
 // ---------------------------------------------------------------------------
+// High-Performance Concurrent Fetcher
+// ---------------------------------------------------------------------------
+// Bypasses cloud timeouts by running 4 concurrent API streams.
+async function fastFetchAll(client, endpoint, query, fields) {
+  const PAGE_SIZE = 10000;
+  let total = NaN;
+  
+  try {
+    const initial = await client.get(endpoint, {
+      params: { sysparm_query: query, sysparm_limit: 1, sysparm_exclude_reference_link: true }
+    });
+    total = parseInt(initial.headers['x-total-count'], 10);
+  } catch (err) {
+    console.warn(`[FastFetch] Could not get x-total-count for ${endpoint}`);
+  }
+
+  const results = [];
+
+  // If ServiceNow gives us the total count, we can parallelize the download
+  if (!isNaN(total) && total > 0) {
+    console.log(`[FastFetch] ${endpoint} total records: ${total}. Fetching concurrently...`);
+    const offsets = [];
+    for (let i = 0; i < total; i += PAGE_SIZE) offsets.push(i);
+
+    const CONCURRENCY = 4; // Run 4 page fetches at the exact same time
+    for (let i = 0; i < offsets.length; i += CONCURRENCY) {
+      const batch = offsets.slice(i, i + CONCURRENCY);
+      const promises = batch.map(offset => client.get(endpoint, {
+        params: {
+          sysparm_query: query,
+          sysparm_limit: PAGE_SIZE,
+          sysparm_offset: offset,
+          sysparm_fields: fields,
+          sysparm_exclude_reference_link: true
+        }
+      }).catch(e => {
+        console.error(`[FastFetch] Batch failed at offset ${offset}:`, e.message);
+        return { data: { result: [] } }; // Failsafe
+      }));
+      
+      const batchRes = await Promise.all(promises);
+      batchRes.forEach(r => {
+        if (r.data && Array.isArray(r.data.result)) {
+          results.push(...r.data.result);
+        }
+      });
+    }
+  } else {
+    // Fallback to sequential fetching if x-total-count is hidden by ACLs
+    console.log(`[FastFetch] ${endpoint} falling back to sequential fetch...`);
+    let offset = 0;
+    while (true) {
+      const res = await client.get(endpoint, {
+        params: {
+          sysparm_query: query,
+          sysparm_limit: PAGE_SIZE,
+          sysparm_offset: offset,
+          sysparm_fields: fields,
+          sysparm_exclude_reference_link: true
+        }
+      });
+      const page = res.data?.result || [];
+      results.push(...page);
+      if (page.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+  }
+  return results;
+}
+
+
+// ---------------------------------------------------------------------------
 // Connection test
 // ---------------------------------------------------------------------------
 
@@ -69,9 +141,7 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   console.log(`[CACHE MISS] Fetching fresh schema for ${cacheKey}...`);
   const schema = await fetchServiceNowSchemaInternal(url, username, password, opts);
   
-  // Save the result in RAM so the next tab loads instantly
   BACKEND_SCHEMA_CACHE.set(cacheKey, schema);
-  
   return schema;
 }
 
@@ -82,28 +152,15 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
   const tableLimit  = opts.tableLimit  ?? Infinity;
   const includeCore = opts.includeCore ?? false;
 
-  const PAGE_SIZE = 10_000;
+  // 1. Fetch all tables concurrently
   let allTablesRaw = [];
-  let offset = 0;
   try {
-    while (true) {
-      const res = await client.get('/api/now/table/sys_db_object', {
-        params: {
-          sysparm_limit:   PAGE_SIZE,
-          sysparm_offset:  offset,
-          sysparm_fields:  'name,label,sys_id,super_class',
-          sysparm_orderby: 'name',
-        },
-      });
-      const page = res.data.result || [];
-      allTablesRaw = allTablesRaw.concat(page);
-      if (page.length < PAGE_SIZE) break;
-      offset += PAGE_SIZE;
-    }
+    allTablesRaw = await fastFetchAll(client, '/api/now/table/sys_db_object', '', 'name,label,sys_id,super_class');
   } catch (err) {
     throw new Error(`Failed to fetch table list: ${err.message}`);
   }
 
+  // 2. Filter tables based on user settings
   let filterApplied;
   let tablesRaw;
   if (includeCore) {
@@ -116,51 +173,27 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
       .slice(0, tableLimit);
   }
 
-  const tableNames = tablesRaw.map(t => t.name);
-  let dictRaw = [];
-  if (tableNames.length > 0) {
-    try {
-      // OPTIMIZATION: Chunk by 100 tables at a time, and process 3 chunks concurrently 
-      // to drastically reduce total HTTP connection time and bypass Cloud Timeouts
-      const chunks = chunkArray(tableNames, 100); 
-      const DICT_PAGE_SIZE = 10_000;
+  const tableNameSet = new Set(tablesRaw.map(t => t.name));
 
-      for (let i = 0; i < chunks.length; i += 3) {
-        const batch = chunks.slice(i, i + 3);
-        const promises = batch.map(async (chunk) => {
-          let localDict = [];
-          let dictOffset = 0;
-          while (true) {
-            const res = await client.get('/api/now/table/sys_dictionary', {
-              params: {
-                sysparm_query: `nameIN${chunk.join(',')}^internal_type!=collection`,
-                sysparm_limit:  DICT_PAGE_SIZE,
-                sysparm_offset: dictOffset,
-                sysparm_fields: 'name,element,label,internal_type,reference,mandatory,max_length',
-              },
-            });
-            const page = res.data.result || [];
-            localDict = localDict.concat(page);
-            if (page.length < DICT_PAGE_SIZE) break;
-            dictOffset += DICT_PAGE_SIZE;
-          }
-          return localDict;
-        });
-        
-        // Wait for the 3 concurrent chunks to finish before firing the next 3
-        const results = await Promise.all(promises);
-        for (const r of results) dictRaw = dictRaw.concat(r);
-      }
+  // 3. Fetch entire dictionary concurrently (Massive speed boost over nameIN queries)
+  let dictRaw = [];
+  if (tableNameSet.size > 0) {
+    try {
+      dictRaw = await fastFetchAll(client, '/api/now/table/sys_dictionary', 'internal_type!=collection', 'name,element,label,internal_type,reference,mandatory,max_length');
     } catch (err) {
       console.error("Dictionary fetch error:", err.message);
-      // Failsafe: if the dictionary times out, we still return the tables so the app doesn't die.
     }
   }
 
+  // 4. In-Memory Mapping (Instantaneous)
   const columnsByTable = {};
   for (const col of dictRaw) {
     if (!col.element) continue; 
     const tbl = col.name;
+    
+    // Only process the columns for the tables we actually care about
+    if (!tableNameSet.has(tbl)) continue;
+
     if (!columnsByTable[tbl]) columnsByTable[tbl] = [];
     columnsByTable[tbl].push({
       name: col.element,
@@ -172,7 +205,6 @@ async function fetchServiceNowSchemaInternal(url, username, password, opts) {
     });
   }
 
-  const tableNameSet = new Set(tablesRaw.map(t => t.name));
   const relationships = [];
   for (const [tableName, cols] of Object.entries(columnsByTable)) {
     for (const col of cols) {
@@ -246,10 +278,4 @@ export async function fetchServiceNowTableArtifacts(instanceUrl, username, passw
   } catch (err) {
     throw new Error(`Failed to fetch artifacts for ${tableName}: ${err.message}`);
   }
-}
-
-function chunkArray(arr, size) {
-  const chunks = [];
-  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
-  return chunks;
 }
