@@ -17,18 +17,7 @@
     }
 
     /* ── Top Nav ──────────────────────────────────────────────────────── */
-    .topnav {
-      background: #0a0a1a;
-      padding: 0 24px;
-      display: flex;
-      align-items: center;
-      gap: 24px;
-      height: 52px;
-      position: sticky;
-      top: 0;
-      z-index: 200;
-      box-shadow: 0 2px 8px rgba(0,0,0,.4);
-    }
+    .topnav { background: #0a0a1a; padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; position: sticky; top: 0; z-index: 200; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
     .topnav .brand { color: #fff; font-weight: 700; font-size: 15px; letter-spacing: .3px; text-decoration: none; }
     .topnav a { color: #aab; font-size: 13px; text-decoration: none; transition: color .15s; }
     .topnav a:hover, .topnav a.active { color: #4da6ff; }
@@ -41,50 +30,16 @@
     .page-sub   { font-size: 13px; color: #666; }
 
     /* ── Action bar (Moved to Top) ────────────────────────────────────── */
-    .action-bar {
-      background: #fff;
-      border-radius: 10px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.1);
-      padding: 16px 20px;
-      margin-bottom: 24px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-      position: sticky;
-      top: 60px;
-      z-index: 150;
-    }
+    .action-bar { background: #fff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.1); padding: 16px 20px; margin-bottom: 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; position: sticky; top: 60px; z-index: 150; }
     .action-bar-label { font-size: 13px; font-weight: 600; color: #555; margin-right: 4px; }
 
     /* ── Two-column instance grid ─────────────────────────────────────── */
-    .instance-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-      margin-bottom: 20px;
-    }
+    .instance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
     @media (max-width: 900px) { .instance-grid { grid-template-columns: 1fr; } }
 
     /* ── Cards ────────────────────────────────────────────────────────── */
-    .card {
-      background: #fff;
-      border-radius: 10px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
-      padding: 20px;
-      margin-bottom: 20px;
-    }
-    .card-title {
-      font-size: 13px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .6px;
-      color: #555;
-      margin-bottom: 14px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
+    .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: #555; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
     .instance-card { border-top: 3px solid #0066cc; }
     .instance-card.inst2 { border-top-color: #7c3aed; }
     .instance-card.connected { border-top-color: #1a7a4a; }
@@ -118,30 +73,13 @@
     .status-error      { background: #f8d7da; color: #721c24; }
 
     /* ── ERD Visualizer ───────────────────────────────────────────────── */
-    .erd-container {
-      border: 1px solid #333;
-      border-radius: 8px;
-      background: #1a1a2e; /* Dark theme to match visualizer */
-      height: 500px;
-      position: relative;
-      overflow: hidden;
-    }
-    .erd-placeholder {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      color: #888;
-      font-size: 13px;
-      gap: 8px;
-      pointer-events: none;
-    }
+    .erd-container { border: 1px solid #333; border-radius: 8px; background: #1a1a2e; height: 500px; position: relative; overflow: hidden; }
+    .erd-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #888; font-size: 13px; gap: 8px; pointer-events: none; }
     .erd-placeholder .ph-icon { font-size: 36px; }
     .erd-network { width: 100%; height: 100%; }
+    .btn-back-macro { position: absolute; top: 10px; right: 10px; z-index: 100; font-size: 11px; padding: 6px 10px; }
 
-    /* ── ERD toolbar (above canvas) ───────────────────────────────────── */
+    /* ── ERD toolbar ───────────────────────────────────── */
     .erd-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; flex-wrap: wrap; gap: 6px; }
     .erd-toolbar-left  { display: flex; align-items: center; gap: 10px; }
     .erd-title { font-size: 12px; font-weight: 600; color: #555; }
@@ -237,7 +175,6 @@
 </nav>
 
 <div class="page">
-
   <div class="page-header">
     <div class="page-title">⚡ Live Instance Comparison</div>
     <div class="page-sub">Connect directly to two ServiceNow instances and compare schemas and data in real-time — no file exports required.</div>
@@ -253,7 +190,6 @@
   <div id="global-alert"></div>
 
   <div class="instance-grid">
-
     <div class="card instance-card" id="card-inst1">
       <div class="card-title">
         <span>🔵 Instance 1</span>
@@ -281,8 +217,8 @@
             Showing <strong id="erd-filtered-inst1">0</strong> of <strong id="erd-total-inst1">0</strong> tables
           </span>
           <select id="table-filter-inst1" style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;">
-            <option value="user_custom">User/Custom Tables (u_*, x_*)</option>
             <option value="all">All Tables</option>
+            <option value="user_custom">User/Custom Tables (u_*, x_*)</option>
             <option value="with_relationships">Tables with Relationships</option>
           </select>
           <input type="text" id="erd-search-inst1" placeholder="Search tables…" style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;flex:1;max-width:200px;" />
@@ -299,6 +235,7 @@
           </div>
         </div>
         <div class="erd-container" id="erd-inst1">
+          <button id="btn-back-macro-inst1" class="btn btn-secondary btn-back-macro hidden" onclick="resetToMacroView(1)">&#8592; Full View</button>
           <div class="erd-placeholder" id="erd-ph-inst1">
             <div class="ph-icon">🗄️</div>
             <div>Connect to load schema</div>
@@ -343,8 +280,8 @@
             Showing <strong id="erd-filtered-inst2">0</strong> of <strong id="erd-total-inst2">0</strong> tables
           </span>
           <select id="table-filter-inst2" style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;">
-            <option value="user_custom">User/Custom Tables (u_*, x_*)</option>
             <option value="all">All Tables</option>
+            <option value="user_custom">User/Custom Tables (u_*, x_*)</option>
             <option value="with_relationships">Tables with Relationships</option>
           </select>
           <input type="text" id="erd-search-inst2" placeholder="Search tables…" style="padding:4px 8px;font-size:12px;border:1px solid #d0d7e2;border-radius:4px;flex:1;max-width:200px;" />
@@ -361,6 +298,7 @@
           </div>
         </div>
         <div class="erd-container" id="erd-inst2">
+          <button id="btn-back-macro-inst2" class="btn btn-secondary btn-back-macro hidden" onclick="resetToMacroView(2)">&#8592; Full View</button>
           <div class="erd-placeholder" id="erd-ph-inst2">
             <div class="ph-icon">🗄️</div>
             <div>Connect to load schema</div>
@@ -382,7 +320,7 @@
     <div class="card-title"><span>📊</span> Data Comparison</div>
     <div class="data-form-row">
       <div class="form-group"><label>Table Name</label><input type="text" id="data-table-name" placeholder="e.g. incident" /></div>
-      <div class="form-group"><label>Key Columns <span class="text-muted">(comma-separated)</span></label><input type="text" id="data-key-cols" placeholder="e.g. sys_id, number" /></div>
+      <div class="form-group"><label>Key Columns <span class="text-muted">(comma-separated, default: sys_id)</span></label><input type="text" id="data-key-cols" placeholder="e.g. sys_id, number" /></div>
       <div class="form-group"><label>Compare Columns <span class="text-muted">(blank = all)</span></label><input type="text" id="data-compare-cols" placeholder="e.g. state, priority" /></div>
     </div>
     <div class="btn-row">
@@ -404,24 +342,19 @@
       <div class="stat-grid" id="schema-stats"></div>
 
       <div class="accordion-header" onclick="toggleAccordion('acc-added-tables')">
-        <span>➕ Tables only in Instance 2 <span class="badge badge-green" id="badge-added-tables">0</span></span>
-        <span class="accordion-arrow" id="arr-added-tables">▼</span>
+        <span>➕ Tables only in Instance 2 <span class="badge badge-green" id="badge-added-tables">0</span></span><span class="accordion-arrow" id="arr-added-tables">▼</span>
       </div>
       <div class="accordion-body open" id="acc-added-tables"><div id="list-added-tables" class="table-list" style="max-height:180px;"></div></div>
-
       <hr class="section-divider" />
 
       <div class="accordion-header" onclick="toggleAccordion('acc-removed-tables')">
-        <span>➖ Tables only in Instance 1 <span class="badge badge-red" id="badge-removed-tables">0</span></span>
-        <span class="accordion-arrow" id="arr-removed-tables">▼</span>
+        <span>➖ Tables only in Instance 1 <span class="badge badge-red" id="badge-removed-tables">0</span></span><span class="accordion-arrow" id="arr-removed-tables">▼</span>
       </div>
       <div class="accordion-body open" id="acc-removed-tables"><div id="list-removed-tables" class="table-list" style="max-height:180px;"></div></div>
-
       <hr class="section-divider" />
 
       <div class="accordion-header" onclick="toggleAccordion('acc-modified-tables')">
-        <span>✏️ Modified Tables (column changes) <span class="badge badge-amber" id="badge-modified-tables">0</span></span>
-        <span class="accordion-arrow" id="arr-modified-tables">▼</span>
+        <span>✏️ Modified Tables (column changes) <span class="badge badge-amber" id="badge-modified-tables">0</span></span><span class="accordion-arrow" id="arr-modified-tables">▼</span>
       </div>
       <div class="accordion-body open" id="acc-modified-tables">
         <div class="table-wrap">
@@ -432,11 +365,15 @@
         </div>
       </div>
     </div>
-  </div><div class="results-section" id="results-data">
+  </div>
+
+  <div class="results-section" id="results-data">
     <div class="card">
       <div class="card-title"><span>📊</span> Data Comparison Results — <span id="data-result-table" class="mono"></span></div>
+      
+      <div id="data-schema-warnings" class="mt-8 mb-12"></div>
+      
       <div id="alert-data-results"></div>
-
       <div class="stat-grid" id="data-stats"></div>
 
       <div class="accordion-header" onclick="toggleAccordion('acc-data-added')">
@@ -463,6 +400,10 @@
         </div>
       </div>
     </div>
-  </div></div><script src="/js/live-compare.js"></script>
+  </div>
+
+</div>
+
+<script src="/js/live-compare.js"></script>
 </body>
 </html>
