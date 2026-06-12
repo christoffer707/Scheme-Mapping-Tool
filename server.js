@@ -30,13 +30,7 @@ app.post('/api/erd/generate', async (req, res) => {
 
     const entities = {};
     schema.tables.forEach(t => {
-      entities[t.name] = { 
-        id: t.sys_id, 
-        name: t.name, 
-        label: t.label, 
-        super_class: t.super_class, // Now piping extension data to the UI
-        fields: schema.columns[t.name] || [] 
-      };
+      entities[t.name] = { id: t.sys_id, name: t.name, label: t.label, fields: schema.columns[t.name] || [] };
     });
 
     schemaCache = { entities, relationships: schema.relationships };
@@ -82,15 +76,15 @@ function getHTMLPage() {
     .sidebar { width: 350px; background: white; border-right: 1px solid #ddd; display: flex; flex-direction: column; z-index: 10; }
     .sidebar-header { padding: 20px; border-bottom: 1px solid #ddd; }
     .controls { padding: 20px; border-bottom: 1px solid #ddd; background: #f9f9f9; }
-    .table-search-container { padding: 15px; border-bottom: 1px solid #ddd; background: #fff; }
+    .table-search-container { padding: 15px; border-bottom: 1px solid #ddd; background: #fff; position: sticky; top: 0; z-index: 15; }
     .entity-list { flex: 1; overflow-y: auto; padding: 10px; scroll-behavior: smooth; }
     
     /* Main Canvas */
     .main { flex: 1; position: relative; background: #1a1a2e; display: flex; }
     #network { flex: 1; height: 100%; }
-    
-    /* Top Left Overlay */
     .canvas-overlay { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.75); padding: 12px 18px; border-radius: 8px; font-size: 13px; z-index: 5; pointer-events: auto; line-height: 1.5; border: 1px solid rgba(255,255,255,0.1); max-width: 320px; }
+    
+    /* Back Button */
     #btn-back-macro { display: none; margin-top: 12px; padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; background: #1a7a4a; color: white; border: none; cursor: pointer; transition: background 0.2s; width: 100%; text-align: center; }
     #btn-back-macro:hover { background: #155f3a; }
 
@@ -155,7 +149,10 @@ function getHTMLPage() {
       </div>
 
       <div class="table-search-container" id="search-container" style="display:none;">
-        <input type="text" id="tableSearch" placeholder="Search tables (e.g., incident)..." onkeyup="filterTables()">
+        <div style="position: relative;">
+          <input type="text" id="tableSearch" placeholder="Search tables (e.g., incident)..." oninput="filterTables()" style="padding-right: 28px;">
+          <span onclick="clearSearch()" style="position: absolute; right: 8px; top: 9px; cursor: pointer; color: #999; font-weight: bold; font-size: 14px;" title="Clear search">✕</span>
+        </div>
         <button class="btn-secondary" style="margin-top: 10px; font-size: 11px; padding: 6px;" onclick="renderMacroGraph(false)">Show All Relationships (Macro View)</button>
         <div style="font-size: 11px; color: #888; margin-top: 6px;" id="table-count-label"></div>
       </div>
@@ -255,10 +252,9 @@ function getHTMLPage() {
       }
     }
 
-    // Extended getTableType to include 'extended' logic
     function getTableType(tableName, entity) {
       if (tableName.startsWith('u_') || tableName.startsWith('x_')) return 'custom';
-      if (entity && entity.super_class) return 'extended'; // Returns orange if it extends a table
+      if (entity && entity.super_class) return 'extended';
       if (tableName.startsWith('sys_') || tableName.startsWith('cmdb_') || tableName.startsWith('sn_') || 
           ['incident', 'change_request', 'problem', 'request', 'sc_req_item', 'task'].includes(tableName)) return 'core';
       return 'standard';
@@ -266,10 +262,10 @@ function getHTMLPage() {
 
     function getTableColor(tableName, entity) {
       const type = getTableType(tableName, entity);
-      if (type === 'custom') return { bg: '#1a7a4a', border: '#155f3a' };     // Green
-      if (type === 'extended') return { bg: '#e67e22', border: '#b9661a' };  // Orange
-      if (type === 'core') return { bg: '#7c3aed', border: '#6d28d9' };      // Purple
-      return { bg: '#0066cc', border: '#003d99' };                           // Blue
+      if (type === 'custom') return { bg: '#1a7a4a', border: '#155f3a' };
+      if (type === 'extended') return { bg: '#e67e22', border: '#b9661a' };
+      if (type === 'core') return { bg: '#7c3aed', border: '#6d28d9' };
+      return { bg: '#0066cc', border: '#003d99' };
     }
 
     function populateEntityList(erd) {
@@ -294,6 +290,15 @@ function getHTMLPage() {
       tableDOMNodes.forEach(item => {
         item.element.style.display = (item.name.toLowerCase().includes(q) || item.label.includes(q)) ? 'block' : 'none';
       });
+    }
+
+    // New helper to rapidly clear search input and reset the sidebar view
+    function clearSearch() {
+      const searchBox = document.getElementById('tableSearch');
+      if (searchBox.value !== '') {
+        searchBox.value = '';
+        filterTables();
+      }
     }
 
     function resetToMacroView() {
@@ -457,6 +462,10 @@ function getHTMLPage() {
       network.on("click", function (params) {
         if (params.nodes.length > 0) {
           const clickedNodeId = params.nodes[0];
+          
+          // Clear the sidebar search so the clicked item isn't accidentally hidden by an old query
+          clearSearch();
+
           const sidebarItem = tableDOMNodes.find(item => item.name === clickedNodeId)?.element;
           selectAndRenderTable(clickedNodeId, sidebarItem);
           
