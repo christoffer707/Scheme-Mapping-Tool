@@ -145,7 +145,7 @@ export function compareData(df1, df2, keyColumns, compareColumns) {
   };
 }
 
-// ── NEW: File Splitter ─────────────────────────────────────────────────────
+// ── File Splitter ──────────────────────────────────────────────────────────
 export function splitDataFrame(df, chunkSize) {
   const chunks = [];
   for (let i = 0; i < df.length; i += chunkSize) {
@@ -154,7 +154,7 @@ export function splitDataFrame(df, chunkSize) {
   return chunks;
 }
 
-// ── NEW: Column Normalizer ─────────────────────────────────────────────────
+// ── Column Normalizer ──────────────────────────────────────────────────────
 export function normalizeColumns(df, columns, action) {
   return df.map(row => {
     const newRow = { ...row };
@@ -170,6 +170,40 @@ export function normalizeColumns(df, columns, action) {
         }
         newRow[col] = val;
       }
+    }
+    return newRow;
+  });
+}
+
+// ── NEW: Find & Replace ────────────────────────────────────────────────────
+export function findAndReplace(df, columns, searchStr, replaceStr, useRegex, matchCase) {
+  let regex;
+  if (useRegex) {
+    regex = new RegExp(searchStr, matchCase ? 'g' : 'gi');
+  } else {
+    const escaped = searchStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    regex = new RegExp(escaped, matchCase ? 'g' : 'gi');
+  }
+
+  return df.map(row => {
+    const newRow = { ...row };
+    for (const col of columns) {
+      if (newRow[col] !== undefined && newRow[col] !== null) {
+        newRow[col] = String(newRow[col]).replace(regex, replaceStr);
+      }
+    }
+    return newRow;
+  });
+}
+
+// ── NEW: Column Operations ─────────────────────────────────────────────────
+export function columnOperations(df, ops) {
+  return df.map(row => {
+    const newRow = {};
+    for (const key of Object.keys(row)) {
+      if (ops.drop && ops.drop.includes(key)) continue;
+      const newKey = (ops.rename && ops.rename[key]) ? ops.rename[key] : key;
+      newRow[newKey] = row[key];
     }
     return newRow;
   });
