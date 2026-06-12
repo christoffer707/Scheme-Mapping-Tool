@@ -100,11 +100,45 @@ async function apiPost(endpoint, body) {
   return data;
 }
 
+// ── Credential Memory ──────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Load saved creds for inst1 and inst2
+  [1, 2].forEach(n => {
+    const saved = localStorage.getItem(`sn_live_cred_${n}`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        $(`inst${n}-url`).value = parsed.url || '';
+        $(`inst${n}-user`).value = parsed.user || '';
+        $(`inst${n}-pass`).value = parsed.pass || '';
+      } catch(e) {}
+    } else if (n === 1) {
+      // Auto-fill Inst 1 with global creds from the Compare tab if available
+      const global = localStorage.getItem('sn_global_creds');
+      if (global) {
+        try {
+           const parsed = JSON.parse(global);
+           $('inst1-url').value = parsed.url || '';
+           $('inst1-user').value = parsed.user || '';
+           $('inst1-pass').value = parsed.pass || '';
+        } catch(e) {}
+      }
+    }
+  });
+});
+
 function getCredentials(n) {
+  const url = $(`inst${n}-url`).value.trim();
+  const user = $(`inst${n}-user`).value.trim();
+  const pass = $(`inst${n}-pass`).value;
+  
+  // Auto-save to session memory
+  localStorage.setItem(`sn_live_cred_${n}`, JSON.stringify({ url, user, pass }));
+  
   return {
-    instance_url: $(`inst${n}-url`).value.trim(),
-    username:      $(`inst${n}-user`).value.trim(),
-    password:      $(`inst${n}-pass`).value,
+    instance_url: url,
+    username: user,
+    password: pass,
   };
 }
 
