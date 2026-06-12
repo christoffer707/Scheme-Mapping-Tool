@@ -1,16 +1,6 @@
-You are completely right. When we ported the drill-down logic into the Live Compare page, I forgot to attach the onclick action to the tables generated in the search list!
-
-Because they were just static text, clicking them did absolutely nothing. We need to wire those list items so that clicking one triggers the exact same drill-down as clicking a node on the canvas.
-
-I've also linked them so that if you click a node on the canvas, it will automatically scroll your list down and highlight the table you clicked.
-
-Replace your public/js/live-compare.js file entirely with this fixed version:
-
-JavaScript
 /**
  * live-compare.js
  * Frontend logic for the Live Dual-Instance Comparison page.
- * Handles credential input, API calls, ERD rendering, and results display.
  */
 
 'use strict';
@@ -168,6 +158,10 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
   if (!container) return null;
 
   const tables = tableList || schema.tables || [];
+  
+  // RESTORED: This was missing and causing the ReferenceError crash
+  const visibleTableNames = new Set(tables.map(t => t.name));
+  
   const nodes = new vis.DataSet();
   const edges = new vis.DataSet(); 
 
@@ -204,6 +198,7 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
       margin: 6
     };
 
+    // Apply Fermat's Spiral math if large
     if (isLargeGraph) {
       const r = 30 * Math.sqrt(index);
       const theta = index * goldenAngle;
@@ -228,7 +223,9 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
       });
     });
   } else {
+    // Faint edges for big graphs
     (schema.relationships || []).forEach(rel => {
+      if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
       edges.push({
         from:   rel.from,
         to:     rel.to,
@@ -273,13 +270,12 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
 
   network.on("click", (params) => {
     if (params.nodes.length > 0) {
-      const targetTableName = params.nodes[0];
-      focusTableOnInstance(instanceNum, targetTableName, schema, highlights, tables);
+      focusTableOnInstance(instanceNum, params.nodes[0], schema, highlights, tables);
 
       // Highlight the list item 
       const listId = `table-list-inst${instanceNum}`;
       document.querySelectorAll(`#${listId} .table-list-item`).forEach(el => el.style.background = '');
-      const listItem = $(`tli-${instanceNum}-${targetTableName}`);
+      const listItem = $(`tli-${instanceNum}-${params.nodes[0]}`);
       if (listItem) {
         listItem.style.background = '#e6f2ff';
         listItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -312,7 +308,9 @@ function focusTableOnInstance(n, targetTableName, schema, highlights, tables) {
     else if (removedSet.has(tableName)) { bg = '#c0392b'; border = '#a93226'; }
     else if (modifiedSet.has(tableName)) { bg = '#d68910'; border = '#b7770d'; }
     else {
-      const c = getTableColor(tableName); 
+      // Find the table object to see if it's extended
+      const tableObj = tables.find(t => t.name === tableName);
+      const c = getTableColor(tableName, tableObj); 
       bg = c.bg; border = c.border;
     }
 
@@ -421,7 +419,6 @@ function renderTableList(listId, tables, highlights = {}, n) {
       <div class="tli-cols">${colCount} cols</div>
     `;
 
-    // ADDED CLICK BINDING HERE
     div.onclick = () => {
       document.querySelectorAll(`#${listId} .table-list-item`).forEach(el => el.style.background = '');
       div.style.background = '#e6f2ff';
