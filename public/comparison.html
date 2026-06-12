@@ -23,8 +23,9 @@
     
     .form-group { margin-bottom: 12px; }
     label { display: block; font-size: 12px; font-weight: 600; color: #a0aec0; margin-bottom: 6px; }
-    input[type="text"], input[type="password"], input[type="number"], select { width: 100%; padding: 10px; background: #0b0c10; border: 1px solid #2d3142; border-radius: 6px; font-size: 13px; color: #fff; outline: none; transition: border-color .15s; }
-    input:focus, select:focus { border-color: #0066cc; }
+    input[type="text"], input[type="password"], input[type="number"], select, textarea { width: 100%; padding: 10px; background: #0b0c10; border: 1px solid #2d3142; border-radius: 6px; font-size: 13px; color: #fff; outline: none; transition: border-color .15s; }
+    input:focus, select:focus, textarea:focus { border-color: #0066cc; }
+    textarea { resize: vertical; min-height: 80px; }
     .btn-save { background: #1a7a4a; color: white; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; width: 100%; transition: background 0.2s; }
     .btn-save:hover { background: #155f3a; }
     #cred-status { font-size: 12px; color: #2ecc71; margin-top: 8px; display: none; font-weight: 600; text-align: center; }
@@ -104,6 +105,7 @@
   </nav>
 
   <div class="main-layout">
+    <!-- Global Credential Sidebar -->
     <div class="sidebar">
       <div>
         <h3><span style="color:#e67e22;">🔑</span> Global Credentials</h3>
@@ -118,6 +120,7 @@
       </div>
     </div>
 
+    <!-- Main Content Area -->
     <div class="content" id="dashboard">
       <div class="section-title"><span style="color:#a78bfa;">🔍</span> Data Quality & Analysis</div>
       <div class="grid">
@@ -140,6 +143,16 @@
 
       <div class="section-title"><span style="color:#f472b6;">⚙️</span> Data Transformation</div>
       <div class="grid">
+        <div class="tool-card" onclick="openTool('find-replace')">
+          <div class="tool-icon" style="color:#f472b6;">🔎</div>
+          <h4>Find & Replace</h4>
+          <p>Bulk text replacement across selected columns with Case Sensitivity and Regex support.</p>
+        </div>
+        <div class="tool-card" onclick="openTool('column-operations')">
+          <div class="tool-icon" style="color:#f472b6;">⛙</div>
+          <h4>Column Operations</h4>
+          <p>Drop unwanted columns or rename them in bulk to map to a new table schema.</p>
+        </div>
         <div class="tool-card" onclick="openTool('data-anonymizer')">
           <div class="tool-icon" style="color:#f472b6;">🔒</div>
           <h4>Data Anonymizer</h4>
@@ -158,6 +171,7 @@
       </div>
     </div>
 
+    <!-- Universal Tool Workspace -->
     <div class="content" id="workspace">
       <div class="ws-header">
         <button class="btn-back" onclick="closeTool()">&#8592; Back to Dashboard</button>
@@ -169,6 +183,7 @@
         <div class="toggle-btn" id="btn-mode-live" onclick="setMode('live')">⚡ Live Instance Pull</div>
       </div>
 
+      <!-- File Input -->
       <div class="input-panel" id="panel-file">
         <div class="drop-zone">
           <input type="file" id="ws-file" accept=".csv,.xlsx,.xls" onchange="document.getElementById('ws-file-name').innerText = this.files[0] ? this.files[0].name : ''" />
@@ -178,6 +193,7 @@
         </div>
       </div>
 
+      <!-- Live Input -->
       <div class="input-panel hidden" id="panel-live">
         <p style="color:#8f9bb3; font-size:13px; margin-bottom:15px;">Credentials will be pulled from the Global Sidebar.</p>
         <div class="row-flex">
@@ -190,11 +206,13 @@
         </div>
       </div>
 
+      <!-- Tool Specific Options Inject Here -->
       <div class="input-panel" id="ws-options"></div>
 
       <button class="btn-run" id="btn-run-tool">Run Tool</button>
       <div id="ws-alert"></div>
 
+      <!-- Results Rendering Section -->
       <div id="ws-results" class="hidden"></div>
     </div>
   </div>
