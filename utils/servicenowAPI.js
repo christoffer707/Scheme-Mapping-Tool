@@ -6,6 +6,10 @@
 
 import axios from 'axios';
 
+// ── Global Backend Schema Cache ────────────────────────────────────────────
+// This prevents identical requests from fetching massive payloads twice.
+const BACKEND_SCHEMA_CACHE = new Map();
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -50,11 +54,29 @@ export async function testServiceNowConnection(instanceUrl, username, password) 
 }
 
 // ---------------------------------------------------------------------------
-// Schema fetch
+// Schema fetch (Wrapped with Cache)
 // ---------------------------------------------------------------------------
 
 export async function fetchServiceNowSchema(instanceUrl, username, password, opts = {}) {
   const url = normaliseInstanceUrl(instanceUrl);
+  const cacheKey = `${url}_${opts.includeCore ? 'core' : 'custom'}`;
+  
+  if (BACKEND_SCHEMA_CACHE.has(cacheKey)) {
+    console.log(`[CACHE HIT] Instantly returned schema for ${cacheKey}`);
+    return BACKEND_SCHEMA_CACHE.get(cacheKey);
+  }
+  
+  console.log(`[CACHE MISS] Fetching fresh schema for ${cacheKey}...`);
+  const schema = await fetchServiceNowSchemaInternal(url, username, password, opts);
+  
+  // Save the result in RAM so the next tab loads instantly
+  BACKEND_SCHEMA_CACHE.set(cacheKey, schema);
+  
+  return schema;
+}
+
+// Internal Fetcher containing the optimized Concurrent Logic
+async function fetchServiceNowSchemaInternal(url, username, password, opts) {
   const client = buildClient(url, username, password);
   
   const tableLimit  = opts.tableLimit  ?? Infinity;
@@ -98,28 +120,40 @@ export async function fetchServiceNowSchema(instanceUrl, username, password, opt
   let dictRaw = [];
   if (tableNames.length > 0) {
     try {
-      const chunks = chunkArray(tableNames, 50);
+      // OPTIMIZATION: Chunk by 100 tables at a time, and process 3 chunks concurrently 
+      // to drastically reduce total HTTP connection time and bypass Cloud Timeouts
+      const chunks = chunkArray(tableNames, 100); 
       const DICT_PAGE_SIZE = 10_000;
 
-      for (const chunk of chunks) {
-        let dictOffset = 0;
-        while (true) {
-          const res = await client.get('/api/now/table/sys_dictionary', {
-            params: {
-              sysparm_query: `nameIN${chunk.join(',')}^internal_type!=collection`,
-              sysparm_limit:  DICT_PAGE_SIZE,
-              sysparm_offset: dictOffset,
-              sysparm_fields: 'name,element,label,internal_type,reference,mandatory,max_length',
-            },
-          });
-          const page = res.data.result || [];
-          dictRaw = dictRaw.concat(page);
-          if (page.length < DICT_PAGE_SIZE) break;
-          dictOffset += DICT_PAGE_SIZE;
-        }
+      for (let i = 0; i < chunks.length; i += 3) {
+        const batch = chunks.slice(i, i + 3);
+        const promises = batch.map(async (chunk) => {
+          let localDict = [];
+          let dictOffset = 0;
+          while (true) {
+            const res = await client.get('/api/now/table/sys_dictionary', {
+              params: {
+                sysparm_query: `nameIN${chunk.join(',')}^internal_type!=collection`,
+                sysparm_limit:  DICT_PAGE_SIZE,
+                sysparm_offset: dictOffset,
+                sysparm_fields: 'name,element,label,internal_type,reference,mandatory,max_length',
+              },
+            });
+            const page = res.data.result || [];
+            localDict = localDict.concat(page);
+            if (page.length < DICT_PAGE_SIZE) break;
+            dictOffset += DICT_PAGE_SIZE;
+          }
+          return localDict;
+        });
+        
+        // Wait for the 3 concurrent chunks to finish before firing the next 3
+        const results = await Promise.all(promises);
+        for (const r of results) dictRaw = dictRaw.concat(r);
       }
     } catch (err) {
-      dictRaw = [];
+      console.error("Dictionary fetch error:", err.message);
+      // Failsafe: if the dictionary times out, we still return the tables so the app doesn't die.
     }
   }
 
@@ -193,7 +227,6 @@ export async function fetchServiceNowTableArtifacts(instanceUrl, username, passw
   const client = buildClient(url, username, password);
 
   try {
-    // We added queries for Workflows and Script Includes (checking if SI script body contains table name)
     const [brRes, csRes, uiRes, wfRes, siRes] = await Promise.allSettled([
       client.get('/api/now/table/sys_script', { params: { sysparm_query: `collection=${tableName}`, sysparm_limit: 100, sysparm_fields: 'name,active,when,action_insert,action_update,action_delete,action_query' } }),
       client.get('/api/now/table/sys_script_client', { params: { sysparm_query: `table=${tableName}`, sysparm_limit: 100, sysparm_fields: 'name,active,type' } }),
