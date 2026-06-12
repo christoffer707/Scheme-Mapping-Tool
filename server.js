@@ -594,9 +594,45 @@ function getHTMLPage() {
       document.querySelectorAll('.entity-item').forEach(el => el.classList.remove('active'));
     }
   </script>
+
+  <script>
+    // ── Global Credential Memory Bridge ──────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      const urlInput = document.getElementById('instance');
+      const userInput = document.getElementById('username');
+      const passInput = document.getElementById('password');
+
+      if (!urlInput || !userInput || !passInput) return;
+
+      const globalCreds = localStorage.getItem('sn_global_creds');
+      if (globalCreds) {
+        try {
+          const parsed = JSON.parse(globalCreds);
+          if (parsed.url) urlInput.value = parsed.url;
+          if (parsed.user) userInput.value = parsed.user;
+          if (parsed.pass) passInput.value = parsed.pass;
+        } catch(e) {
+          console.error("Failed to parse global credentials.");
+        }
+      }
+
+      const syncToGlobal = () => {
+        const creds = {
+          url: urlInput.value.trim(),
+          user: userInput.value.trim(),
+          pass: passInput.value
+        };
+        localStorage.setItem('sn_global_creds', JSON.stringify(creds));
+      };
+
+      urlInput.addEventListener('input', syncToGlobal);
+      userInput.addEventListener('input', syncToGlobal);
+      passInput.addEventListener('input', syncToGlobal);
+    });
+  </script>
 </body>
 </html>`;
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`ServiceNow ERD Visualizer running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`ServiceNow ERD Visualizer running on port ${PORT}`));
