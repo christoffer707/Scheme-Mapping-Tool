@@ -160,7 +160,6 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
   const tables = tableList || schema.tables || [];
   const visibleTableNames = new Set(tables.map(t => t.name));
   
-  // FIXED: Using standard arrays for initialization
   const nodes = [];
   const edges = []; 
 
@@ -197,7 +196,6 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
       margin: 6
     };
 
-    // Apply Fermat's Spiral math if large
     if (isLargeGraph) {
       const r = 30 * Math.sqrt(index);
       const theta = index * goldenAngle;
@@ -222,7 +220,6 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
       });
     });
   } else {
-    // Faint edges for big graphs
     (schema.relationships || []).forEach(rel => {
       if (!visibleTableNames.has(rel.from) || !visibleTableNames.has(rel.to)) return;
       edges.push({
@@ -235,18 +232,17 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
     });
   }
 
-  // Convert the pure arrays into datasets for vis.js
   const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
 
   const options = {
     physics: { enabled: !isLargeGraph },
     layout: { improvedLayout: false },
     interaction: {
-      navigationButtons: true,
+      navigationButtons: true, // Forces zoom buttons to appear
       keyboard: false,
-      zoomView: true,
+      zoomView: true,          // Ensures mouse wheel scroll works
       hideEdgesOnDrag: isLargeGraph,
-      hideEdgesOnZoom: isLargeGraph
+      hideEdgesOnZoom: false   // Disabled so lines don't vanish when scrolling
     },
     nodes: { borderWidth: 1, shadow: !isLargeGraph },
     edges: { width: 1, selectionWidth: 2 }
@@ -273,7 +269,6 @@ function renderERD(containerId, schema, highlights = {}, tableList, noticeId, in
       const targetTableName = params.nodes[0];
       focusTableOnInstance(instanceNum, targetTableName, schema, highlights, tables);
 
-      // Highlight the list item 
       const listId = `table-list-inst${instanceNum}`;
       document.querySelectorAll(`#${listId} .table-list-item`).forEach(el => el.style.background = '');
       const listItem = $(`tli-${instanceNum}-${targetTableName}`);
@@ -341,13 +336,22 @@ function focusTableOnInstance(n, targetTableName, schema, highlights, tables) {
 
   const network = state[`inst${n}`].network;
   network.setData({ nodes, edges });
+  
+  // Re-enable physics for placement, but ensure navigation/zoom buttons persist!
   network.setOptions({
     physics: {
       enabled: true, solver: 'forceAtlas2Based',
       forceAtlas2Based: { gravitationalConstant: -100, centralGravity: 0.01, springConstant: 0.08, springLength: 200 },
       stabilization: { enabled: true, iterations: 150, updateInterval: 50 }
     },
-    interaction: { hover: true, dragNodes: true, hideEdgesOnDrag: true }
+    interaction: { 
+      hover: true, 
+      dragNodes: true, 
+      hideEdgesOnDrag: true,
+      navigationButtons: true, // Retain Zoom Buttons
+      zoomView: true,          // Retain Scroll Zoom
+      hideEdgesOnZoom: false   // Prevent lines from vanishing on scroll
+    }
   });
 
   network.once('stabilizationIterationsDone', () => {
@@ -360,7 +364,6 @@ window.resetToMacroView = function(n) {
   const btn = $(`btn-back-macro-inst${n}`);
   if (btn) btn.classList.add('hidden');
   
-  // Clear any list highlights
   document.querySelectorAll(`#table-list-inst${n} .table-list-item`).forEach(el => el.style.background = '');
 
   const schema = state[`inst${n}`].schema;
@@ -404,7 +407,7 @@ function renderTableList(listId, tables, highlights = {}, n) {
   tables.forEach(table => {
     const div = document.createElement('div');
     div.className = 'table-list-item';
-    div.id = `tli-${n}-${table.name}`; // Allows targeting on click
+    div.id = `tli-${n}-${table.name}`;
 
     if (addedSet.has(table.name))    div.classList.add('highlight-added');
     if (removedSet.has(table.name))  div.classList.add('highlight-removed');
