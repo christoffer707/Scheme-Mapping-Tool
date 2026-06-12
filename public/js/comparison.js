@@ -152,6 +152,51 @@ function openTool(toolId) {
     $('btn-run-tool').onclick = runColumnOperations;
     $('btn-run-tool').innerText = 'Apply Operations & Download';
   }
+  else if (toolId === 'row-filter') {
+    titleEl.innerText = 'Row Filter';
+    optionsEl.innerHTML = `
+      <div class="row-flex">
+        <div class="form-group">
+          <label>Target Column</label>
+          <input type="text" id="ws-opt-col" placeholder="e.g. state">
+        </div>
+        <div class="form-group">
+          <label>Condition</label>
+          <select id="ws-opt-op">
+            <option value="eq">Equals (==)</option>
+            <option value="neq">Does Not Equal (!=)</option>
+            <option value="contains">Contains</option>
+            <option value="not_contains">Does Not Contain</option>
+            <option value="gt">Greater Than (>)</option>
+            <option value="lt">Less Than (<)</option>
+            <option value="empty">Is Empty</option>
+            <option value="not_empty">Is Not Empty</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Value</label>
+          <input type="text" id="ws-opt-val" placeholder="e.g. Closed">
+        </div>
+      </div>
+    `;
+    $('btn-run-tool').onclick = runRowFilter;
+    $('btn-run-tool').innerText = 'Filter Rows & Download';
+  }
+  else if (toolId === 'calculated-columns') {
+    titleEl.innerText = 'Calculated Columns';
+    optionsEl.innerHTML = `
+      <div class="form-group">
+        <label>New Column Name</label>
+        <input type="text" id="ws-opt-newcol" placeholder="e.g. full_name">
+      </div>
+      <div class="form-group">
+        <label>Formula Expression <span style="color:#888;">(Wrap existing column names in brackets)</span></label>
+        <input type="text" id="ws-opt-expr" placeholder="e.g. [first_name] + ' ' + [last_name] OR [price] * 1.08">
+      </div>
+    `;
+    $('btn-run-tool').onclick = runCalculatedColumns;
+    $('btn-run-tool').innerText = 'Calculate & Download';
+  }
 }
 
 function closeTool() {
@@ -200,7 +245,55 @@ function buildPayload() {
   return fd;
 }
 
-// ── NEW: Find & Replace ────────────────────────────────────────────────────
+// ── NEW: Row Filter ────────────────────────────────────────────────────────
+async function runRowFilter() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Filtering rows...';
+
+  try {
+    const fd = buildPayload();
+    fd.append('filter_col', $('ws-opt-col').value.trim());
+    fd.append('filter_op', $('ws-opt-op').value);
+    fd.append('filter_val', $('ws-opt-val').value.trim());
+
+    const res = await fetch('/api/row-filter', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'filtered_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your filtered file has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── NEW: Calculated Columns ────────────────────────────────────────────────
+async function runCalculatedColumns() {
+  const alertEl = $('ws-alert');
+  alertEl.className = 'alert info';
+  alertEl.innerHTML = '⏳ Calculating columns...';
+
+  try {
+    const fd = buildPayload();
+    fd.append('new_col_name', $('ws-opt-newcol').value.trim());
+    fd.append('expression', $('ws-opt-expr').value.trim());
+
+    const res = await fetch('/api/calculated-columns', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await extractError(res));
+
+    triggerDownload(await res.blob(), 'calc_export.xlsx');
+    alertEl.className = 'alert success';
+    alertEl.innerHTML = '✅ Success! Your file with calculated columns has been downloaded.';
+  } catch (err) {
+    alertEl.className = 'alert error';
+    alertEl.innerHTML = `❌ Error: ${err.message}`;
+  }
+}
+
+// ── Existing Tools ─────────────────────────────────────────────────────────
+
 async function runFindReplace() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -229,7 +322,6 @@ async function runFindReplace() {
   }
 }
 
-// ── NEW: Column Operations ─────────────────────────────────────────────────
 async function runColumnOperations() {
   const alertEl = $('ws-alert');
   alertEl.className = 'alert info';
@@ -245,9 +337,7 @@ async function runColumnOperations() {
     if (renameText) {
       renameText.split('\n').forEach(line => {
         const parts = line.split('=');
-        if (parts.length === 2) {
-          renameMap[parts[0].trim()] = parts[1].trim();
-        }
+        if (parts.length === 2) renameMap[parts[0].trim()] = parts[1].trim();
       });
     }
 
@@ -265,8 +355,6 @@ async function runColumnOperations() {
     alertEl.innerHTML = `❌ Error: ${err.message}`;
   }
 }
-
-// ── Existing Tools ─────────────────────────────────────────────────────────
 
 async function runFileSplitter() {
   const alertEl = $('ws-alert');
